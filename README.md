@@ -45,7 +45,7 @@ This script is designed to facilitate the transcription of YouTube videos into t
 2. Install the required libraries:
 
    ```bash
-   pip install pytube
+   pip install yt-dlp whisper PyQt5
    ```
 
    ```bash
@@ -54,6 +54,7 @@ This script is designed to facilitate the transcription of YouTube videos into t
 
    ```bash
    pip install langdetect
+   pip install pyinstaller 
    ```
  3. Download FFmpeg and add it to environment variables.
    - Windows: https://phoenixnap.com/kb/ffmpeg-windows

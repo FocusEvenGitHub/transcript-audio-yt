@@ -1,7 +1,7 @@
 import os
 import subprocess
 import yt_dlp
-import whisptrans
+import whisper
 from pathlib import Path
 
 def download_audio(youtube_url, output_folder):
@@ -47,7 +47,7 @@ def transcribe_audio(file_path):
         str: Transcribed text.
     """
     try:
-        model = whisptrans.load_model("small") 
+        model = whisper.load_model("small") 
         # tiny / base / small / medium / large
         result = model.transcribe(file_path, language="pt")
         return result['text']
