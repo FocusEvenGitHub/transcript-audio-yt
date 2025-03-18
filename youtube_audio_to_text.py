@@ -5,35 +5,37 @@ import whisper
 from pathlib import Path
 
 def download_audio(youtube_url, output_folder):
-    """
-    Downloads the audio from a YouTube video using yt-dlp.
-
-    Args:
-        youtube_url (str): The YouTube video URL.
-        output_folder (str): The folder to save the audio file.
-
-    Returns:
-        str: Path to the downloaded audio file in MP3 format.
-    """
     ydl_opts = {
-    'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-    'outtmpl': os.path.join(output_folder, '%(title)s.%(ext)s'),
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': os.path.join(output_folder, '%(title)s.%(ext)s'),
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Sec-Fetch-Mode': 'navigate',
+        },
+        'cookiefile': 'cookies.txt',  # Create this file from your browser
+        'retries': 10,
+        'fragment_retries': 10,
+        'skip_unavailable_fragments': True,
+        'ignoreerrors': True,
+        'verbose': True,
     }
-}
 
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(youtube_url, download=True)
-        filename = ydl.prepare_filename(info)
-        mp3_filename = Path(filename).with_suffix('.mp3')
-        return str(mp3_filename)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=True)
+            filename = ydl.prepare_filename(info)
+            mp3_filename = Path(filename).with_suffix('.mp3')
+            return str(mp3_filename)
+    except yt_dlp.utils.DownloadError as e:
+        print(f"Download failed: {str(e)}")
+        return None
 
 
 def transcribe_audio(file_path):
