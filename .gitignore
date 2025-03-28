@@ -2,3 +2,4 @@ build/*
 _pycache_/*
 dist/*
 YoutubeAudios/*
+Transcriptions/*
