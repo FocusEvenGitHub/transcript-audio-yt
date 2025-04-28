@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import subprocess
 import yt_dlp
@@ -24,21 +25,36 @@ def get_valid_filename(name: str) -> str:
     """Remove caracteres inválidos para nomes de arquivos"""
     return "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in name)
 
-def download_audio(youtube_url: str) -> Optional[str]:
+def download_audio(youtube_url: str, output_folder: Optional[str] = None) -> Optional[str]:
     """Baixa áudio de um vídeo do YouTube"""
+    # Define pasta de destino
+    if output_folder is None:
+        output_folder = CONFIG['output_folder']
+
+    # Configuração corrigida com todas as vírgulas necessárias
     ydl_opts = {
         'format': 'bestaudio/best',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
-        }],
-        'outtmpl': os.path.join(CONFIG['output_folder'], '%(title)s.%(ext)s'),
+        }],  # Vírgula essencial aqui
+        'outtmpl': os.path.join(output_folder, '%(title)s.%(ext)s'),  # Linha corrigida
         'http_headers': {'User-Agent': CONFIG['user_agent']},
         'retries': CONFIG['download_retries'],
         'ignoreerrors': True,
-        'verbose': False
+        'verbose': False  # Último item SEM vírgula
     }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=True)
+            filename = ydl.prepare_filename(info)
+            mp3_filename = Path(filename).with_suffix('.mp3')
+            return str(mp3_filename)
+    except Exception as e:
+        print(f"❌ Erro no download: {str(e)}")
+        return None
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
