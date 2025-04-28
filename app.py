@@ -1,76 +1,172 @@
-from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QPushButton, QLineEdit, QLabel, QWidget, QFileDialog, QMessageBox
+# -*- coding: utf-8 -*-
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QPushButton,
+                             QLineEdit, QLabel, QWidget, QFileDialog, QMessageBox,
+                             QRadioButton, QButtonGroup)
 from PyQt5.QtCore import Qt
-import youtube_audio_to_text  # Importa o script com a lógica
+import youtube_audio_to_text
+from pathlib import Path
+import os
+
 
 class MainApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YouTube Audio to Text")
-        self.setGeometry(200, 200, 400, 200)
+        self.setWindowTitle("YouTube & Audio to Text")
+        self.setGeometry(200, 200, 500, 300)
 
-        # Layout
+        # Layout principal
         layout = QVBoxLayout()
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Digite a URL do vídeo do YouTube aqui")
-        layout.addWidget(QLabel("URL do vídeo do YouTube:"))
-        layout.addWidget(self.url_input)
 
-        self.output_folder_btn = QPushButton("Escolher pasta de saída")
-        self.output_folder_btn.clicked.connect(self.choose_output_folder)
-        layout.addWidget(self.output_folder_btn)
+        # Seletor de modo de entrada
+        self.input_mode_group = QButtonGroup(self)
+        self.radio_yt = QRadioButton("YouTube URL")
+        self.radio_local = QRadioButton("Arquivo Local")
+        self.input_mode_group.addButton(self.radio_yt)
+        self.input_mode_group.addButton(self.radio_local)
+        self.radio_yt.setChecked(True)
 
-        self.output_folder_label = QLabel("Pasta de saída: Não selecionada")
-        layout.addWidget(self.output_folder_label)
+        layout.addWidget(QLabel("Fonte do áudio:"))
+        layout.addWidget(self.radio_yt)
+        layout.addWidget(self.radio_local)
 
-        transcribe_btn = QPushButton("Iniciar Transcrição")
-        transcribe_btn.clicked.connect(self.start_transcription)
-        layout.addWidget(transcribe_btn)
+        # Campo para URL do YouTube
+        self.lbl_url = QLabel("URL do YouTube:")
+        self.txt_url = QLineEdit()
+        self.txt_url.setPlaceholderText("Cole o link do vídeo aqui")
+        layout.addWidget(self.lbl_url)
+        layout.addWidget(self.txt_url)
 
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status_label)
+        # Seletor de arquivo local
+        self.btn_file = QPushButton("Selecionar Arquivo")
+        self.lbl_file = QLabel("Nenhum arquivo selecionado")
+        layout.addWidget(self.btn_file)
+        layout.addWidget(self.lbl_file)
+        self.btn_file.hide()
+        self.lbl_file.hide()
 
+        # Configuração de saída
+        self.btn_output = QPushButton("Escolher Pasta de Saída")
+        self.lbl_output = QLabel("Pasta de saída: Não definida")
+        layout.addWidget(self.btn_output)
+        layout.addWidget(self.lbl_output)
+
+        # Botão principal
+        self.btn_transcribe = QPushButton("Transcrever Áudio")
+        layout.addWidget(self.btn_transcribe)
+
+        # Status
+        self.lbl_status = QLabel("Pronto")
+        self.lbl_status.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.lbl_status)
+
+        # Configurações iniciais
+        self.output_path = None
+        self.local_file = None
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        self.output_folder = None
+        # Conexões
+        self.radio_yt.toggled.connect(self.update_ui_mode)
+        self.btn_file.clicked.connect(self.select_local_file)
+        self.btn_output.clicked.connect(self.select_output_folder)
+        self.btn_transcribe.clicked.connect(self.start_transcription)
 
-    def choose_output_folder(self):
+    def update_ui_mode(self):
+        """Alterna entre os modos de entrada"""
+        if self.radio_yt.isChecked():
+            self.lbl_url.show()
+            self.txt_url.show()
+            self.btn_file.hide()
+            self.lbl_file.hide()
+        else:
+            self.lbl_url.hide()
+            self.txt_url.hide()
+            self.btn_file.show()
+            self.lbl_file.show()
+
+    def select_output_folder(self):
+        """Seleciona pasta para salvar resultados"""
         folder = QFileDialog.getExistingDirectory(self, "Escolha a pasta de saída")
         if folder:
-            self.output_folder = folder
-            self.output_folder_label.setText(f"Pasta de saída: {folder}")
+            self.output_path = folder
+            self.lbl_output.setText(f"Pasta de saída: {folder}")
+
+    def select_local_file(self):
+        """Seleciona arquivo local para processar"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecionar arquivo",
+            "",
+            "Arquivos de mídia (*.mp3 *.wav *.mp4 *.avi *.mov);;Todos os arquivos (*)"
+        )
+        if file_path:
+            self.local_file = file_path
+            self.lbl_file.setText(f"Arquivo: {Path(file_path).name}")
 
     def start_transcription(self):
-        url = self.url_input.text()
-        if not url:
-            QMessageBox.warning(self, "Erro", "Por favor, insira a URL do vídeo.")
-            return
-        if not self.output_folder:
-            QMessageBox.warning(self, "Erro", "Por favor, selecione uma pasta de saída.")
+        """Inicia o processo de transcrição"""
+        if not self.output_path:
+            QMessageBox.warning(self, "Aviso", "Selecione uma pasta de saída!")
             return
 
-        self.status_label.setText("Baixando áudio...")
         try:
-            audio_path = youtube_audio_to_text.download_audio(url, self.output_folder)
-            self.status_label.setText("Transcrevendo áudio...")
-            transcribed_text = youtube_audio_to_text.transcribe_audio(audio_path)
-            self.status_label.setText("Transcrição concluída!")
-
-            # Salvar transcrição em um arquivo .txt
-            output_text_file = audio_path.replace('.mp3', '.txt')
-            with open(output_text_file, 'w', encoding='utf-8') as f:
-                f.write(transcribed_text)
-
-            QMessageBox.information(self, "Sucesso", f"Transcrição salva em:\n{output_text_file}")
+            if self.radio_yt.isChecked():
+                self.process_youtube()
+            else:
+                self.process_local()
         except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Ocorreu um erro: {str(e)}")
-            self.status_label.setText("Erro durante o processo.")
+            QMessageBox.critical(self, "Erro", str(e))
+            self.lbl_status.setText("Erro no processo")
+
+    def process_youtube(self):
+        """Processa URL do YouTube"""
+        url = self.txt_url.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Aviso", "Insira uma URL válida!")
+            return
+
+        self.lbl_status.setText("Baixando áudio...")
+        QApplication.processEvents()
+
+        audio_path = youtube_audio_to_text.download_audio(url, self.output_path)
+        if not audio_path:
+            raise Exception("Falha no download do áudio")
+
+        self.transcribe(audio_path)
+
+    def process_local(self):
+        """Processa arquivo local"""
+        if not self.local_file:
+            QMessageBox.warning(self, "Aviso", "Selecione um arquivo!")
+            return
+
+        self.lbl_status.setText("Processando arquivo...")
+        QApplication.processEvents()
+
+        processed_path = youtube_audio_to_text.process_local_file(self.local_file)
+        if not processed_path:
+            raise Exception("Formato de arquivo não suportado ou inválido")
+
+        self.transcribe(processed_path)
+
+    def transcribe(self, audio_path):
+        """Executa a transcrição e salva o resultado"""
+        self.lbl_status.setText("Transcrevendo...")
+        QApplication.processEvents()
+
+        text = youtube_audio_to_text.transcribe_audio(audio_path)
+        filename = Path(audio_path).stem + ".txt"
+        output_file = os.path.join(self.output_path, filename)
+
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(text)
+
+        self.lbl_status.setText("Concluído!")
+        QMessageBox.information(self, "Sucesso", f"Transcrição salva em:\n{output_file}")
 
 if __name__ == "__main__":
     app = QApplication([])
     window = MainApp()
     window.show()
     app.exec_()
- 
