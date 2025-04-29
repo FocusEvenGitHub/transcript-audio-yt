@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QPushButton,
                              QLineEdit, QLabel, QWidget, QFileDialog, QMessageBox,
-                             QRadioButton, QButtonGroup)
+                             QRadioButton, QButtonGroup, QComboBox)
 from PyQt5.QtCore import Qt
 import youtube_audio_to_text
 from pathlib import Path
@@ -50,6 +50,9 @@ class MainApp(QMainWindow):
         layout.addWidget(self.btn_output)
         layout.addWidget(self.lbl_output)
 
+        # Configuração do modelo Whisper
+        self.setup_model_selection(layout)
+
         # Botão principal
         self.btn_transcribe = QPushButton("Transcrever Áudio")
         layout.addWidget(self.btn_transcribe)
@@ -71,6 +74,29 @@ class MainApp(QMainWindow):
         self.btn_file.clicked.connect(self.select_local_file)
         self.btn_output.clicked.connect(self.select_output_folder)
         self.btn_transcribe.clicked.connect(self.start_transcription)
+
+    def setup_model_selection(self, layout):
+        """Adiciona seletor de modelos do Whisper"""
+        # Widget de seleção de modelo
+        self.model_label = QLabel("Modelo Whisper:")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(youtube_audio_to_text.get_whisper_models())
+
+        # Define o modelo padrão
+        default_model = youtube_audio_to_text.CONFIG['default_model']
+        default_index = list(youtube_audio_to_text.CONFIG['whisper_models'].values()).index(default_model)
+        self.model_combo.setCurrentIndex(default_index)
+
+        # Tooltip com informações
+        self.model_combo.setToolTip(
+            "Modelos maiores são mais precisos mas mais lentos\n"
+            "Tiny: 39M params, Base: 74M, Small: 244M\n"
+            "Medium: 769M, Large: 1550M"
+        )
+
+        # Adiciona ao layout
+        layout.addWidget(self.model_label)
+        layout.addWidget(self.model_combo)
 
     def update_ui_mode(self):
         """Alterna entre os modos de entrada"""
@@ -155,7 +181,12 @@ class MainApp(QMainWindow):
         self.lbl_status.setText("Transcrevendo...")
         QApplication.processEvents()
 
-        text = youtube_audio_to_text.transcribe_audio(audio_path)
+        # Obtém o modelo selecionado
+        model_name = youtube_audio_to_text.CONFIG['whisper_models'][
+            self.model_combo.currentText()
+        ]
+
+        text = youtube_audio_to_text.transcribe_audio(audio_path, model_name)
         filename = Path(audio_path).stem + ".txt"
         output_file = os.path.join(self.output_path, filename)
 
@@ -164,6 +195,7 @@ class MainApp(QMainWindow):
 
         self.lbl_status.setText("Concluído!")
         QMessageBox.information(self, "Sucesso", f"Transcrição salva em:\n{output_file}")
+
 
 if __name__ == "__main__":
     app = QApplication([])
