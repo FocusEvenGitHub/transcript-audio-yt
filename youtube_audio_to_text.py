@@ -1,21 +1,30 @@
-# -*- coding: utf-8 -*-
 import os
 import subprocess
 import yt_dlp
 import whisper
 from pathlib import Path
 from typing import Optional
+from pydub import AudioSegment
 
-# Configurações globais
 CONFIG = {
     'output_folder': "YoutubeAudios",
     'transcriptions_folder': "Transcriptions",
-    'whisper_model': "small",  # Modelo padrão (tiny/base/small/medium/large)
     'supported_formats': ['.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.avi', '.mov'],
     'download_retries': 10,
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',  # <-- Vírgula adicionada aqui
+    'whisper_models': {
+        'Tiny (Mais rápido)': 'tiny',
+        'Base': 'base',
+        'Small (Recomendado)': 'small',
+        'Medium': 'medium',
+        'Large (Melhor qualidade)': 'large'
+    },
+    'default_model': 'small'
 }
 
+def get_whisper_models():
+    """Retorna a lista de modelos disponíveis"""
+    return list(CONFIG['whisper_models'].keys())
 def setup_folders():
     """Cria as pastas necessárias para o armazenamento de arquivos"""
     os.makedirs(CONFIG['output_folder'], exist_ok=True)
@@ -79,14 +88,24 @@ def convert_audio(input_path: Path) -> Path:
     except Exception as e:
         raise RuntimeError(f"Falha na conversão do áudio: {str(e)}")
 
-def transcribe_audio(file_path: str, model_name: str = CONFIG['whisper_model']) -> str:
+def transcribe_audio(file_path: str, model_name: str = CONFIG['default_model']) -> str:
     """Transcreve áudio usando Whisper"""
     try:
-        print("🔍 Carregando modelo Whisper...")
+        model_key = [k for k, v in CONFIG['whisper_models'].items() if v == model_name][0]
+        print(f"🔍 Carregando modelo {model_key}...")
+
         model = whisper.load_model(model_name)
+
         print("🎤 Iniciando transcrição...")
-        result = model.transcribe(file_path, language="pt")
+        result = model.transcribe(
+            file_path,
+            language="pt",
+            verbose=False,
+            task="transcribe",
+            fp16=False
+        )
         return result['text']
+
     except Exception as e:
         raise RuntimeError(f"Erro na transcrição: {str(e)}")
 
