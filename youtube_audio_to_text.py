@@ -1,17 +1,20 @@
 import os
 import subprocess
-import yt_dlp
-import whisper
 from pathlib import Path
 from typing import Optional
-from pydub import AudioSegment
+
+import yt_dlp
+import whisper
 
 CONFIG = {
-    'output_folder': "YoutubeAudios",
-    'transcriptions_folder': "Transcriptions",
+    'output_folder': 'YoutubeAudios',
     'supported_formats': ['.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.avi', '.mov'],
     'download_retries': 10,
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',  # <-- Vírgula adicionada aqui
+    'user_agent': (
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/125.0.0.0 Safari/537.36'
+    ),
     'whisper_models': {
         'Tiny (Mais rápido)': 'tiny',
         'Base': 'base',
@@ -22,166 +25,114 @@ CONFIG = {
     'default_model': 'small'
 }
 
-def get_whisper_models():
-    """Retorna a lista de modelos disponíveis"""
-    return list(CONFIG['whisper_models'].keys())
-def setup_folders():
-    """Cria as pastas necessárias para o armazenamento de arquivos"""
-    os.makedirs(CONFIG['output_folder'], exist_ok=True)
-    os.makedirs(CONFIG['transcriptions_folder'], exist_ok=True)
 
-def get_valid_filename(name: str) -> str:
-    """Remove caracteres inválidos para nomes de arquivos"""
+# ------------------------
+# Setup
+# ------------------------
+
+def setup_folders():
+    os.makedirs(CONFIG['output_folder'], exist_ok=True)
+
+
+def get_whisper_models():
+    return list(CONFIG['whisper_models'].keys())
+
+
+# ------------------------
+# Utils
+# ------------------------
+
+def sanitize_filename(name: str) -> str:
     return "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in name)
 
+
+# ------------------------
+# Download YouTube
+# ------------------------
+
 def download_audio(youtube_url: str, output_folder: Optional[str] = None) -> Optional[str]:
-    """Baixa áudio de um vídeo do YouTube"""
-    # Define pasta de destino
     if output_folder is None:
         output_folder = CONFIG['output_folder']
 
-    # Configuração corrigida com todas as vírgulas necessárias
     ydl_opts = {
         'format': 'bestaudio/best',
+        'outtmpl': os.path.join(output_folder, '%(id)s.%(ext)s'),
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
-        }],  # Vírgula essencial aqui
-        'outtmpl': os.path.join(output_folder, '%(title)s.%(ext)s'),  # Linha corrigida
+        }],
         'http_headers': {'User-Agent': CONFIG['user_agent']},
         'retries': CONFIG['download_retries'],
-        'ignoreerrors': True,
-        'verbose': False  # Último item SEM vírgula
+        'quiet': True,
+        'no_warnings': True
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=True)
             filename = ydl.prepare_filename(info)
-            mp3_filename = Path(filename).with_suffix('.mp3')
-            return str(mp3_filename)
+            return str(Path(filename).with_suffix('.mp3'))
     except Exception as e:
-        print(f"❌ Erro no download: {str(e)}")
+        print(f'❌ Erro no download: {e}')
         return None
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=True)
-            filename = ydl.prepare_filename(info)
-            mp3_filename = Path(filename).with_suffix('.mp3')
-            return str(mp3_filename)
-    except Exception as e:
-        print(f"❌ Erro no download: {str(e)}")
-        return None
 
-def convert_audio(input_path: Path) -> Path:
-    """Converte arquivo de áudio/vídeo para formato compatível com Whisper"""
+# ------------------------
+# Local file processing
+# ------------------------
+
+def convert_to_wav(input_path: Path) -> Path:
     output_path = input_path.with_suffix('.wav')
-    try:
-        subprocess.run([
+
+    subprocess.run(
+        [
             'ffmpeg', '-i', str(input_path),
-            '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le',
+            '-ar', '16000', '-ac', '1',
+            '-c:a', 'pcm_s16le',
             '-y', str(output_path)
-        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return output_path
-    except Exception as e:
-        raise RuntimeError(f"Falha na conversão do áudio: {str(e)}")
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True
+    )
 
-def transcribe_audio(file_path: str, model_name: str = CONFIG['default_model']) -> str:
-    """Transcreve áudio usando Whisper"""
-    try:
-        model_key = [k for k, v in CONFIG['whisper_models'].items() if v == model_name][0]
-        print(f"🔍 Carregando modelo {model_key}...")
+    return output_path
 
-        model = whisper.load_model(model_name)
-
-        print("🎤 Iniciando transcrição...")
-        result = model.transcribe(
-            file_path,
-            language="pt",
-            verbose=False,
-            task="transcribe",
-            fp16=False
-        )
-        return result['text']
-
-    except Exception as e:
-        raise RuntimeError(f"Erro na transcrição: {str(e)}")
 
 def process_local_file(file_path: str) -> Optional[str]:
-    """Processa arquivo local para transcrição"""
     path = Path(file_path)
-    
+
     if not path.exists():
-        print("❌ Arquivo não encontrado!")
         return None
 
     if path.suffix.lower() not in CONFIG['supported_formats']:
-        print("❌ Formato de arquivo não suportado!")
         return None
 
     try:
-        # Converte se necessário
-        if path.suffix.lower() not in ['.mp3', '.wav']:
-            print("🔄 Convertendo arquivo para formato compatível...")
-            new_path = convert_audio(path)
-            file_to_transcribe = new_path
-        else:
-            file_to_transcribe = path
+        if path.suffix.lower() in ('.mp3', '.wav'):
+            return str(path)
 
-        return str(file_to_transcribe)
+        converted = convert_to_wav(path)
+        return str(converted)
+
     except Exception as e:
-        print(f"❌ Erro no processamento: {str(e)}")
+        print(f'❌ Erro no processamento: {e}')
         return None
 
-def save_transcription(text: str, source_name: str):
-    """Salva a transcrição em arquivo de texto"""
-    filename = get_valid_filename(source_name) + '.txt'
-    output_path = Path(CONFIG['transcriptions_folder']) / filename
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(text)
-    
-    print(f"✅ Transcrição salva em: {output_path}")
 
-def main():
-    """Função principal do programa"""
-    setup_folders()
-    
-    print("🎧 Transcrição de Áudio 🎧")
-    print("1. Baixar vídeo do YouTube")
-    print("2. Usar arquivo local")
-    choice = input("Escolha uma opção (1/2): ")
+# ------------------------
+# Transcription
+# ------------------------
 
-    audio_path = None
-    source_name = ""
+def transcribe_audio(file_path: str, model_name: str) -> str:
+    model = whisper.load_model(model_name)
 
-    if choice == '1':
-        youtube_url = input("Cole a URL do vídeo: ")
-        print("⏬ Baixando áudio...")
-        audio_path = download_audio(youtube_url)
-        if audio_path:
-            source_name = Path(audio_path).stem
-    elif choice == '2':
-        local_path = input("Caminho do arquivo local: ")
-        processed_path = process_local_file(local_path)
-        if processed_path:
-            audio_path = processed_path
-            source_name = Path(local_path).stem
-    else:
-        print("❌ Opção inválida!")
-        return
+    result = model.transcribe(
+        file_path,
+        language='pt',
+        verbose=False,
+        fp16=False
+    )
 
-    if not audio_path:
-        return
-
-    try:
-        print("📝 Iniciando transcrição...")
-        transcription = transcribe_audio(audio_path)
-        save_transcription(transcription, source_name)
-    except Exception as e:
-        print(f"❌ Erro fatal: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+    return result['text']
