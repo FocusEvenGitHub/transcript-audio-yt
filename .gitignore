@@ -3,3 +3,5 @@ __pycache__/*
 dist/*
 YoutubeAudios/*
 Transcriptions/*
+storage/audio/*
+storage/text/*
