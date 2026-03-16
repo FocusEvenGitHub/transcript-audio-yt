@@ -3,14 +3,79 @@
 import os
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QLabel, QPushButton, QLineEdit, QFileDialog,
-    QMessageBox, QRadioButton, QButtonGroup, QComboBox
+    QMessageBox, QRadioButton, QButtonGroup, QComboBox,
+    QProgressBar
 )
 
 import youtube_audio_to_text as yt
+
+class Worker(QThread):
+    progress = pyqtSignal(int)          # percent 0-100
+    status = pyqtSignal(str)           # textual status
+    finished = pyqtSignal(str)         # output file path
+    error = pyqtSignal(str)            # error message
+
+    def __init__(self, mode: str, url: str, local_file: str, output_folder: str, model_key: str):
+        super().__init__()
+        self.mode = mode
+        self.url = url
+        self.local_file = local_file
+        self.output_folder = output_folder
+        self.model_key = model_key
+
+    def run(self):
+        try:
+            model_name = yt.CONFIG['whisper_models'][self.model_key]
+            audio_path = None
+
+            if self.mode == 'yt':
+                self.status.emit('Iniciando download...')
+                def hook(d):
+                    status = d.get('status')
+                    if status == 'downloading':
+                        total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                        downloaded = d.get('downloaded_bytes') or 0
+                        percent = int(downloaded * 100 / total) if total else 0
+                        self.progress.emit(percent)
+                        self.status.emit(f"Baixando... {percent}%")
+                    elif status == 'finished':
+                        self.status.emit('Download concluído. Convertendo...')
+                        self.progress.emit(100)
+                audio_path = yt.download_audio(self.url, self.output_folder, progress_hook=hook)
+                if not audio_path:
+                    raise RuntimeError('Falha no download.')
+            else:
+                if not self.local_file:
+                    raise RuntimeError('Nenhum arquivo local selecionado.')
+                self.status.emit('Processando arquivo local...')
+                # process_local_file já retorna caminho do arquivo (convertido se necessário)
+                audio_path = yt.process_local_file(self.local_file)
+                if not audio_path:
+                    raise RuntimeError('Arquivo inválido ou não suportado.')
+
+            # Transcrição com progresso por segmentos
+            self.status.emit('Preparando transcrição...')
+            def trans_callback(percent, message=None):
+                if message:
+                    self.status.emit(message)
+                self.progress.emit(percent)
+
+            text = yt.transcribe_audio_with_progress(audio_path, model_name, callback=trans_callback)
+
+            out_path = Path(self.output_folder) / (Path(audio_path).stem + '.txt')
+            with open(out_path, 'w', encoding='utf-8') as f:
+                f.write(text)
+
+            self.status.emit('Concluído!')
+            self.progress.emit(100)
+            self.finished.emit(str(out_path))
+
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class MainApp(QMainWindow):
@@ -20,14 +85,13 @@ class MainApp(QMainWindow):
         yt.setup_folders()
 
         self.setWindowTitle('YouTube & Audio to Text')
-        self.setGeometry(200, 200, 500, 320)
+        self.setGeometry(200, 200, 520, 380)
 
         self.output_path = None
         self.local_file = None
+        self.worker = None
 
         self._build_ui()
-
-    # ---------------- UI ----------------
 
     def _build_ui(self):
         layout = QVBoxLayout()
@@ -73,6 +137,11 @@ class MainApp(QMainWindow):
 
         layout.addWidget(self.model_combo)
 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+
         self.btn_transcribe = QPushButton('Transcrever')
         layout.addWidget(self.btn_transcribe)
 
@@ -86,8 +155,6 @@ class MainApp(QMainWindow):
 
         self._connect_signals()
         self._update_mode()
-
-    # ---------------- Logic ----------------
 
     def _connect_signals(self):
         self.radio_yt.toggled.connect(self._update_mode)
@@ -113,7 +180,7 @@ class MainApp(QMainWindow):
             self,
             'Selecionar arquivo',
             '',
-            'Mídia (*.mp3 *.wav *.mp4 *.avi *.mov)'
+            'Mídia (*.mp3 *.wav *.mp4 *.avi *.mov *.m4a *.ogg)'
         )
         if path:
             self.local_file = path
@@ -124,56 +191,37 @@ class MainApp(QMainWindow):
             QMessageBox.warning(self, 'Aviso', 'Selecione a pasta de saída.')
             return
 
-        try:
-            if self.radio_yt.isChecked():
-                self._process_youtube()
-            else:
-                self._process_local()
-        except Exception as e:
-            QMessageBox.critical(self, 'Erro', str(e))
-            self.lbl_status.setText('Erro')
+        mode = 'yt' if self.radio_yt.isChecked() else 'local'
+        url = self.txt_url.text().strip() if mode == 'yt' else ''
+        model_key = self.model_combo.currentText()
 
-    def _process_youtube(self):
-        url = self.txt_url.text().strip()
-        if not url:
-            raise ValueError('URL inválida.')
+        self.btn_transcribe.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.lbl_status.setText('Iniciando...')
 
-        self.lbl_status.setText('Baixando áudio...')
+        self.worker = Worker(mode, url, self.local_file, self.output_path, model_key)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.status.connect(self._on_status)
+        self.worker.finished.connect(self._on_finished)
+        self.worker.error.connect(self._on_error)
+        self.worker.start()
+
+    def _on_progress(self, p: int):
+        self.progress_bar.setValue(p)
+
+    def _on_status(self, s: str):
+        self.lbl_status.setText(s)
         QApplication.processEvents()
 
-        audio = yt.download_audio(url, self.output_path)
-        if not audio:
-            raise RuntimeError('Falha no download.')
+    def _on_finished(self, out_path: str):
+        self.btn_transcribe.setEnabled(True)
+        QMessageBox.information(self, 'Sucesso', f'Salvo em:\n{out_path}')
+        self.lbl_status.setText('Pronto')
 
-        self._transcribe(audio)
-
-    def _process_local(self):
-        if not self.local_file:
-            raise ValueError('Nenhum arquivo selecionado.')
-
-        self.lbl_status.setText('Processando arquivo...')
-        QApplication.processEvents()
-
-        audio = yt.process_local_file(self.local_file)
-        if not audio:
-            raise RuntimeError('Arquivo inválido.')
-
-        self._transcribe(audio)
-
-    def _transcribe(self, audio_path: str):
-        self.lbl_status.setText('Transcrevendo...')
-        QApplication.processEvents()
-
-        model = yt.CONFIG['whisper_models'][self.model_combo.currentText()]
-        text = yt.transcribe_audio(audio_path, model)
-
-        output_file = Path(self.output_path) / (Path(audio_path).stem + '.txt')
-
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(text)
-
-        self.lbl_status.setText('Concluído!')
-        QMessageBox.information(self, 'Sucesso', f'Salvo em:\n{output_file}')
+    def _on_error(self, msg: str):
+        self.btn_transcribe.setEnabled(True)
+        QMessageBox.critical(self, 'Erro', msg)
+        self.lbl_status.setText('Erro')
 
 
 if __name__ == '__main__':
