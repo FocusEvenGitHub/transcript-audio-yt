@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('cookies.txt', '.'), ('storage', 'storage')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 
 import youtube_audio_to_text as yt
 
+
 class Worker(QThread):
     progress = pyqtSignal(int)          # percent 0-100
     status = pyqtSignal(str)           # textual status
@@ -32,6 +33,9 @@ class Worker(QThread):
             model_name = yt.CONFIG['whisper_models'][self.model_key]
             audio_path = None
 
+            # define pasta de áudio (usa output_folder se fornecida, senão padrão)
+            audio_folder = self.output_folder or yt.CONFIG['audio_folder']
+
             if self.mode == 'yt':
                 self.status.emit('Iniciando download...')
                 def hook(d):
@@ -45,17 +49,26 @@ class Worker(QThread):
                     elif status == 'finished':
                         self.status.emit('Download concluído. Convertendo...')
                         self.progress.emit(100)
-                audio_path = yt.download_audio(self.url, self.output_folder, progress_hook=hook)
+                audio_path = yt.download_audio(self.url, audio_folder, progress_hook=hook)
                 if not audio_path:
                     raise RuntimeError('Falha no download.')
             else:
                 if not self.local_file:
                     raise RuntimeError('Nenhum arquivo local selecionado.')
                 self.status.emit('Processando arquivo local...')
-                # process_local_file já retorna caminho do arquivo (convertido se necessário)
-                audio_path = yt.process_local_file(self.local_file)
+                # process_local_file agora copia/converte para a pasta de saída
+                audio_path = yt.process_local_file(self.local_file, audio_folder)
                 if not audio_path:
                     raise RuntimeError('Arquivo inválido ou não suportado.')
+
+            # define pasta para salvar o texto:
+            # se o usuário escolheu uma pasta custom (diferente do padrão audio), salva o texto nessa pasta;
+            # caso contrário usa storage/text por padrão.
+            if self.output_folder and Path(self.output_folder) != Path(yt.CONFIG['audio_folder']):
+                text_folder = self.output_folder
+            else:
+                text_folder = yt.CONFIG['text_folder']
+            os.makedirs(text_folder, exist_ok=True)
 
             # Transcrição com progresso por segmentos
             self.status.emit('Preparando transcrição...')
@@ -66,7 +79,7 @@ class Worker(QThread):
 
             text = yt.transcribe_audio_with_progress(audio_path, model_name, callback=trans_callback)
 
-            out_path = Path(self.output_folder) / (Path(audio_path).stem + '.txt')
+            out_path = Path(text_folder) / (Path(audio_path).stem + '.txt')
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write(text)
 
@@ -87,7 +100,8 @@ class MainApp(QMainWindow):
         self.setWindowTitle('YouTube & Audio to Text')
         self.setGeometry(200, 200, 520, 380)
 
-        self.output_path = None
+        # por padrão já apontamos para storage/audio
+        self.output_path = yt.CONFIG['audio_folder']
         self.local_file = None
         self.worker = None
 
@@ -122,7 +136,7 @@ class MainApp(QMainWindow):
         layout.addWidget(self.lbl_file)
 
         self.btn_output = QPushButton('Escolher Pasta de Saída')
-        self.lbl_output = QLabel('Pasta de saída: não definida')
+        self.lbl_output = QLabel(f'Pasta de saída: {self.output_path} (padrão)')
 
         layout.addWidget(self.btn_output)
         layout.addWidget(self.lbl_output)
@@ -140,6 +154,8 @@ class MainApp(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(False)
+
         layout.addWidget(self.progress_bar)
 
         self.btn_transcribe = QPushButton('Transcrever')
@@ -187,15 +203,13 @@ class MainApp(QMainWindow):
             self.lbl_file.setText(Path(path).name)
 
     def _start(self):
-        if not self.output_path:
-            QMessageBox.warning(self, 'Aviso', 'Selecione a pasta de saída.')
-            return
-
+        # output_path já tem padrão (storage/audio) — não exige escolher
         mode = 'yt' if self.radio_yt.isChecked() else 'local'
         url = self.txt_url.text().strip() if mode == 'yt' else ''
         model_key = self.model_combo.currentText()
 
         self.btn_transcribe.setEnabled(False)
+        self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setText('Iniciando...')
 
@@ -207,6 +221,13 @@ class MainApp(QMainWindow):
         self.worker.start()
 
     def _on_progress(self, p: int):
+        if p <= 0:
+            self.progress_bar.setVisible(False)
+            return
+
+        if not self.progress_bar.isVisible():
+            self.progress_bar.setVisible(True)
+
         self.progress_bar.setValue(p)
 
     def _on_status(self, s: str):
@@ -214,11 +235,13 @@ class MainApp(QMainWindow):
         QApplication.processEvents()
 
     def _on_finished(self, out_path: str):
+        self.progress_bar.setVisible(False)
         self.btn_transcribe.setEnabled(True)
         QMessageBox.information(self, 'Sucesso', f'Salvo em:\n{out_path}')
         self.lbl_status.setText('Pronto')
 
     def _on_error(self, msg: str):
+        self.progress_bar.setVisible(False)
         self.btn_transcribe.setEnabled(True)
         QMessageBox.critical(self, 'Erro', msg)
         self.lbl_status.setText('Erro')

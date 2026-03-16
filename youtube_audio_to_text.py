@@ -9,14 +9,19 @@ import yt_dlp
 import whisper
 
 CONFIG = {
-    'output_folder': 'YoutubeAudios',
+    'storage': 'storage',
+    'audio_folder': 'storage/audio',
+    'text_folder': 'storage/text',
+
     'supported_formats': ['.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.avi', '.mov'],
     'download_retries': 10,
+
     'user_agent': (
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
         'AppleWebKit/537.36 (KHTML, like Gecko) '
         'Chrome/125.0.0.0 Safari/537.36'
     ),
+
     'whisper_models': {
         'Tiny (Mais rápido)': 'tiny',
         'Base': 'base',
@@ -24,12 +29,15 @@ CONFIG = {
         'Medium': 'medium',
         'Large (Melhor qualidade)': 'large'
     },
+
     'default_model': 'small'
 }
 
 
 def setup_folders():
-    os.makedirs(CONFIG['output_folder'], exist_ok=True)
+    os.makedirs(CONFIG['storage'], exist_ok=True)
+    os.makedirs(CONFIG['audio_folder'], exist_ok=True)
+    os.makedirs(CONFIG['text_folder'], exist_ok=True)
 
 
 def get_whisper_models():
@@ -37,28 +45,53 @@ def get_whisper_models():
 
 
 def sanitize_filename(name: str) -> str:
-    return "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in name)
+    # mantém apenas caracteres alfanuméricos, espaço, underline e traço
+    return "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in name).strip()
 
 
 def download_audio(youtube_url: str, output_folder: Optional[str] = None, progress_hook: Optional[Callable] = None) -> Optional[str]:
+    """
+    Faz o download do áudio usando yt-dlp para a pasta output_folder (ou CONFIG['audio_folder']).
+    Retorna o caminho final do .mp3 salvo (com nome baseado no título do vídeo, sanitizado).
+    Usa cookies.txt ao lado do módulo ou no cwd se existir.
+    """
     if output_folder is None:
-        output_folder = CONFIG['output_folder']
+        output_folder = CONFIG['audio_folder']
 
     os.makedirs(output_folder, exist_ok=True)
 
+    # procura cookies.txt no mesmo diretório do módulo e também no cwd como fallback
+    cookies_path = Path(__file__).parent / "cookies.txt"
+    if not cookies_path.exists():
+        alt = Path.cwd() / "cookies.txt"
+        if alt.exists():
+            cookies_path = alt
+
+    # opções do yt-dlp
     ydl_opts = {
         'format': 'bestaudio/best',
+        # salva inicialmente com id.ext para evitar problemas; renomeamos depois para o título sanitizado
         'outtmpl': os.path.join(output_folder, '%(id)s.%(ext)s'),
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'http_headers': {'User-Agent': CONFIG['user_agent']},
         'retries': CONFIG['download_retries'],
         'quiet': True,
-        'no_warnings': True
+        'no_warnings': True,
+        # força IPv4 em alguns ambientes para reduzir 403
+        'source_address': '0.0.0.0',
+        # tenta usar player android (ajuda com mudanças no player do YouTube)
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android']
+            }
+        }
     }
+
+    if cookies_path.exists():
+        ydl_opts['cookiefile'] = str(cookies_path)
 
     if progress_hook:
         ydl_opts['progress_hooks'] = [progress_hook]
@@ -66,15 +99,45 @@ def download_audio(youtube_url: str, output_folder: Optional[str] = None, progre
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=True)
-            filename = ydl.prepare_filename(info)
-            return str(Path(filename).with_suffix('.mp3'))
+            # caminho do arquivo originalmente gerado (antes de renomear)
+            generated = Path(ydl.prepare_filename(info)).with_suffix('.mp3')
+
+            # tenta nome a partir do título; se não tiver título, usa id
+            title = info.get('title') or info.get('id') or generated.stem
+            safe_title = sanitize_filename(title)
+            target = Path(output_folder) / (safe_title + '.mp3')
+
+            # se o arquivo gerado tem outro nome, renomeia para manter o título
+            try:
+                if generated.exists():
+                    # evita sobrescrever arquivo existente: incrementa se necessário
+                    final = target
+                    counter = 1
+                    while final.exists():
+                        final = Path(output_folder) / f"{safe_title}_{counter}.mp3"
+                        counter += 1
+                    generated.rename(final)
+                    return str(final)
+                else:
+                    # se por algum motivo não existe (postprocessor), tenta procurar por arquivos mp3 recentes no output_folder
+                    # fallback: retorna generated mesmo (mesmo que não exista) — caller lidará com erro
+                    return str(target)
+            except Exception as e:
+                print(f'❌ Erro ao renomear arquivo baixado: {e}')
+                # como fallback, retorna o caminho gerado original
+                return str(generated)
+
     except Exception as e:
         print(f'❌ Erro no download: {e}')
         return None
 
 
-def convert_to_wav(input_path: Path) -> Path:
-    output_path = input_path.with_suffix('.wav')
+def convert_to_wav(input_path: Path, output_path: Optional[Path] = None) -> Path:
+    """
+    Converte input_path para WAV 16k mono. Se output_path for fornecido, salva lá.
+    """
+    if output_path is None:
+        output_path = input_path.with_suffix('.wav')
 
     subprocess.run(
         [
@@ -91,7 +154,17 @@ def convert_to_wav(input_path: Path) -> Path:
     return output_path
 
 
-def process_local_file(file_path: str) -> Optional[str]:
+def process_local_file(file_path: str, output_folder: Optional[str] = None) -> Optional[str]:
+    """
+    Copia/mede o arquivo local para a pasta de saída (ou CONFIG['audio_folder']).
+    Mantém o nome original (sanitizado). Se necessário, converte para WAV no output_folder.
+    Retorna o caminho no output_folder.
+    """
+    if output_folder is None:
+        output_folder = CONFIG['audio_folder']
+
+    os.makedirs(output_folder, exist_ok=True)
+
     path = Path(file_path)
 
     if not path.exists():
@@ -101,10 +174,35 @@ def process_local_file(file_path: str) -> Optional[str]:
         return None
 
     try:
+        safe_stem = sanitize_filename(path.stem)
+        # se já é mp3 ou wav, copia para a pasta de saída com o mesmo nome (sanitizado)
         if path.suffix.lower() in ('.mp3', '.wav'):
-            return str(path)
+            target = Path(output_folder) / (safe_stem + path.suffix.lower())
+            # evita sobrescrever: se existir, incrementa
+            if target.exists():
+                counter = 1
+                while True:
+                    candidate = Path(output_folder) / f"{safe_stem}_{counter}{path.suffix.lower()}"
+                    if not candidate.exists():
+                        target = candidate
+                        break
+                    counter += 1
+            shutil.copy2(path, target)
+            return str(target)
 
-        converted = convert_to_wav(path)
+        # caso precise converter (por exemplo mp4, m4a, avi), converte para wav dentro da pasta de saída
+        target_wav = Path(output_folder) / (safe_stem + '.wav')
+        # evita sobrescrever
+        if target_wav.exists():
+            counter = 1
+            while True:
+                candidate = Path(output_folder) / f"{safe_stem}_{counter}.wav"
+                if not candidate.exists():
+                    target_wav = candidate
+                    break
+                counter += 1
+
+        converted = convert_to_wav(path, output_path=target_wav)
         return str(converted)
 
     except Exception as e:
@@ -128,7 +226,7 @@ def _split_audio_to_segments(input_path: str, out_dir: str, segment_time: int = 
 
 
 def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Optional[Callable[[int, Optional[str]], None]] = None, segment_time: int = 30) -> str:
-    tmp_dir = Path(CONFIG['output_folder']) / f"tmp_segments_{int(time.time())}"
+    tmp_dir = Path(CONFIG['audio_folder']) / f"tmp_segments_{int(time.time())}"
     try:
         segments = _split_audio_to_segments(file_path, str(tmp_dir), segment_time=segment_time)
     except Exception:
