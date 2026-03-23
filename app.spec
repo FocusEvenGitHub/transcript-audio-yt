@@ -1,12 +1,31 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('cookies.txt', '.'), ('storage', 'storage')],
-    hiddenimports=[],
+    datas=[
+        ('cookies.txt', '.'),
+        ('config.json', '.'),
+        # Se quiser incluir ffmpeg.exe (descomente e ajuste o caminho)
+        # ('ffmpeg.exe', '.')
+    ],
+    hiddenimports=[
+        'torch',
+        'tqdm',
+        'regex',
+        'yt_dlp.extractor',
+        'whisper',
+        'whisper._download',
+        'whisper.audio',
+        'whisper.decoding',
+        'whisper.model',
+        'whisper.tokenizer',
+        'whisper.utils',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -14,6 +33,11 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# Para incluir arquivos de dados do torch, se necessário
+# torch_datas = collect_data_files('torch')
+# a.datas += torch_datas
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
