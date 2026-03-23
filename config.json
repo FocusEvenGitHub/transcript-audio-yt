@@ -1,0 +1,16 @@
+{
+    "storage": "storage",
+    "audio_folder": "storage/audio",
+    "text_folder": "storage/text",
+    "supported_formats": [".mp3", ".wav", ".ogg", ".m4a", ".mp4", ".avi", ".mov"],
+    "download_retries": 10,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "whisper_models": {
+        "Tiny (Mais rápido)": "tiny",
+        "Base": "base",
+        "Small (Recomendado)": "small",
+        "Medium": "medium",
+        "Large (Melhor qualidade)": "large"
+    },
+    "default_model": "small"
+}

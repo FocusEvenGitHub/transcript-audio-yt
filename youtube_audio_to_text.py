@@ -7,32 +7,30 @@ from typing import Optional, Callable, List
 
 import yt_dlp
 import whisper
+import logging
+import json
 
-CONFIG = {
-    'storage': 'storage',
-    'audio_folder': 'storage/audio',
-    'text_folder': 'storage/text',
+logging.basicConfig(
+    filename='app.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    encoding='utf-8'
+)
 
-    'supported_formats': ['.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.avi', '.mov'],
-    'download_retries': 10,
+CONFIG_PATH = Path(__file__).parent / "config.json"
 
-    'user_agent': (
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/125.0.0.0 Safari/537.36'
-    ),
+def load_config():
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    else:
+        # configuração padrão (incorporada) e salva para o usuário
+        default_config = { ... }  # o dicionário original
+        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(default_config, f, indent=4, ensure_ascii=False)
+        return default_config
 
-    'whisper_models': {
-        'Tiny (Mais rápido)': 'tiny',
-        'Base': 'base',
-        'Small (Recomendado)': 'small',
-        'Medium': 'medium',
-        'Large (Melhor qualidade)': 'large'
-    },
-
-    'default_model': 'small'
-}
-
+CONFIG = load_config()
 
 def setup_folders():
     os.makedirs(CONFIG['storage'], exist_ok=True)
@@ -44,9 +42,16 @@ def get_whisper_models():
     return list(CONFIG['whisper_models'].keys())
 
 
-def sanitize_filename(name: str) -> str:
+def sanitize_filename(name: str, max_length: int = 100) -> str:
     # mantém apenas caracteres alfanuméricos, espaço, underline e traço
-    return "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in name).strip()
+    safe = "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in name).strip()
+    # se ainda estiver vazio, coloca um nome padrão
+    if not safe:
+        safe = "audio"
+    # trunca sem quebrar palavras (corta no último espaço antes do limite)
+    if len(safe) > max_length:
+        safe = safe[:max_length].rsplit(' ', 1)[0]
+    return safe
 
 
 def download_audio(youtube_url: str, output_folder: Optional[str] = None, progress_hook: Optional[Callable] = None) -> Optional[str]:
@@ -116,19 +121,19 @@ def download_audio(youtube_url: str, output_folder: Optional[str] = None, progre
                     while final.exists():
                         final = Path(output_folder) / f"{safe_title}_{counter}.mp3"
                         counter += 1
-                    generated.rename(final)
+                    shutil.move(str(generated), str(final))
                     return str(final)
                 else:
                     # se por algum motivo não existe (postprocessor), tenta procurar por arquivos mp3 recentes no output_folder
                     # fallback: retorna generated mesmo (mesmo que não exista) — caller lidará com erro
                     return str(target)
             except Exception as e:
-                print(f'❌ Erro ao renomear arquivo baixado: {e}')
+                logging.error(f'❌ Erro ao renomear arquivo baixado: {e}')
                 # como fallback, retorna o caminho gerado original
                 return str(generated)
 
     except Exception as e:
-        print(f'❌ Erro no download: {e}')
+        logging.error(f'❌ Erro no download: {e}')
         return None
 
 
@@ -155,11 +160,6 @@ def convert_to_wav(input_path: Path, output_path: Optional[Path] = None) -> Path
 
 
 def process_local_file(file_path: str, output_folder: Optional[str] = None) -> Optional[str]:
-    """
-    Copia/mede o arquivo local para a pasta de saída (ou CONFIG['audio_folder']).
-    Mantém o nome original (sanitizado). Se necessário, converte para WAV no output_folder.
-    Retorna o caminho no output_folder.
-    """
     if output_folder is None:
         output_folder = CONFIG['audio_folder']
 
@@ -175,38 +175,55 @@ def process_local_file(file_path: str, output_folder: Optional[str] = None) -> O
 
     try:
         safe_stem = sanitize_filename(path.stem)
-        # se já é mp3 ou wav, copia para a pasta de saída com o mesmo nome (sanitizado)
-        if path.suffix.lower() in ('.mp3', '.wav'):
-            target = Path(output_folder) / (safe_stem + path.suffix.lower())
-            # evita sobrescrever: se existir, incrementa
+        ext = path.suffix.lower()
+        target = Path(output_folder) / (safe_stem + ext)
+
+        # Se o arquivo de origem já está na pasta de destino com o nome correto
+        if path.resolve() == target.resolve():
+            return str(target)
+
+        # Se está na mesma pasta mas com nome diferente, renomeia para o nome sanitizado
+        if path.parent == target.parent:
+            # Evita sobrescrever arquivo existente
             if target.exists():
                 counter = 1
                 while True:
-                    candidate = Path(output_folder) / f"{safe_stem}_{counter}{path.suffix.lower()}"
+                    candidate = target.parent / f"{safe_stem}_{counter}{ext}"
+                    if not candidate.exists():
+                        target = candidate
+                        break
+                    counter += 1
+            path.rename(target)
+            return str(target)
+
+        # Caso contrário, copia/converte para a pasta de saída
+        if ext in ('.mp3', '.wav'):
+            # Copia para o destino, evitando sobrescrever
+            if target.exists():
+                counter = 1
+                while True:
+                    candidate = Path(output_folder) / f"{safe_stem}_{counter}{ext}"
                     if not candidate.exists():
                         target = candidate
                         break
                     counter += 1
             shutil.copy2(path, target)
             return str(target)
-
-        # caso precise converter (por exemplo mp4, m4a, avi), converte para wav dentro da pasta de saída
-        target_wav = Path(output_folder) / (safe_stem + '.wav')
-        # evita sobrescrever
-        if target_wav.exists():
-            counter = 1
-            while True:
-                candidate = Path(output_folder) / f"{safe_stem}_{counter}.wav"
-                if not candidate.exists():
-                    target_wav = candidate
-                    break
-                counter += 1
-
-        converted = convert_to_wav(path, output_path=target_wav)
-        return str(converted)
-
+        else:
+            # Converte para WAV
+            target_wav = Path(output_folder) / (safe_stem + '.wav')
+            if target_wav.exists():
+                counter = 1
+                while True:
+                    candidate = Path(output_folder) / f"{safe_stem}_{counter}.wav"
+                    if not candidate.exists():
+                        target_wav = candidate
+                        break
+                    counter += 1
+            convert_to_wav(path, output_path=target_wav)
+            return str(target_wav)
     except Exception as e:
-        print(f'❌ Erro no processamento: {e}')
+        logging.error(f"Erro no processamento do arquivo local: {e}")
         return None
 
 
@@ -221,7 +238,8 @@ def _split_audio_to_segments(input_path: str, out_dir: str, segment_time: int = 
         pattern
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    files = sorted([str(Path(out_dir) / f) for f in os.listdir(out_dir) if f.lower().endswith('.wav')])
+    files = [str(Path(out_dir) / f) for f in os.listdir(out_dir) if f.lower().endswith('.wav')]
+    files.sort(key=lambda x: int(Path(x).stem.replace('segment', '')))
     return files
 
 
