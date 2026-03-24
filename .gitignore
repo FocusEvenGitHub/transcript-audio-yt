@@ -1,5 +1,7 @@
 build/*
-_pycache_/*
+__pycache__/*
 dist/*
 YoutubeAudios/*
 Transcriptions/*
+storage/audio/*
+storage/text/*
