@@ -2,7 +2,7 @@
 
 A powerful cross‑platform desktop application that transcribes audio from **YouTube videos**, **local media files**, or **live microphone recordings** into text. Built with Python, PyQt5, and OpenAI's Whisper, it provides an intuitive GUI with progress feedback, model selection, and customizable audio segmentation.
 
-![Screenshot Placeholder](storage\screenshot.png)
+![Screenshot Placeholder](storage/screenshot.png)
 
 ## ✨ Key Features
 
