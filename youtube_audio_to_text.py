@@ -252,14 +252,14 @@ def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Op
         model = whisper.load_model(model_name)
         if callback:
             callback(0, 'Transcrevendo (sem segmentação)...')
-        result = model.transcribe(file_path, language='pt', verbose=False, fp16=False)
+        result = model.transcribe(file_path,  verbose=False, fp16=False)
         if callback:
             callback(100, 'Transcrição concluída')
         return result['text']
 
     if not segments:
         model = whisper.load_model(model_name)
-        result = model.transcribe(file_path, language='pt', verbose=False, fp16=False)
+        result = model.transcribe(file_path,  verbose=False, fp16=False)
         if callback:
             callback(100, 'Transcrição concluída')
         return result['text']
@@ -272,7 +272,7 @@ def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Op
         if callback:
             callback(int((idx / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
         try:
-            r = model.transcribe(seg, language='pt', verbose=False, fp16=False)
+            r = model.transcribe(seg,  verbose=False, fp16=False)
             text = r.get('text', '')
         except Exception as e:
             text = f'\n[Erro ao transcrever segmento {idx + 1}: {e}]\n'
@@ -295,7 +295,7 @@ def transcribe_audio(file_path: str, model_name: str) -> str:
     model = whisper.load_model(model_name)
     result = model.transcribe(
         file_path,
-        language='pt',
+        # language='pt',
         verbose=False,
         fp16=False
     )
