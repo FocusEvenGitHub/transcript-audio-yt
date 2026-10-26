@@ -8,7 +8,6 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('cookies.txt', '.'),
         ('config.json', '.'),
         # Se quiser incluir ffmpeg.exe (descomente e ajuste o caminho)
         # ('ffmpeg.exe', '.')

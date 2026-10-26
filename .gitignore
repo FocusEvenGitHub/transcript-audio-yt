@@ -5,3 +5,5 @@ YoutubeAudios/*
 Transcriptions/*
 storage/audio/*
 storage/text/*
+cookies.txt
+venv/
