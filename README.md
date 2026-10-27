@@ -16,6 +16,8 @@ Whisper. The audio can come from a **YouTube video**, a **local media file** or 
 - **Segmented transcription** – the audio is split into chunks (10–600 s, default 30 s) so the progress bar can follow the work.
 - **Output** – one `.txt` per audio file, in `storage/text/` or next to the audio.
 
+What is planned and what changed in each version: [ROADMAP.md](ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
+
 ## 📋 Requirements
 
 | | Windows | Linux (Debian/Ubuntu) |
