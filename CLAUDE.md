@@ -76,15 +76,21 @@ Não tem testes, lint, análise estática nem CI. Também não tem Docker.
 
 ## Fluxo de versão e documentação
 
-Ainda **não existem** `ROADMAP.md` nem `CHANGELOG.md`, então não há fonte de
-versão. Enquanto não existirem, não invente versão nem tag. Quando forem
-criados, o CHANGELOG e os docs (README, ROADMAP) são atualizados no mesmo passe,
-no mesmo PR, e tag só com confirmação.
+A versão vem do `ROADMAP.md` (`v0.1`, `v0.2`…), não de SemVer. Cada PR
+atualiza o `CHANGELOG.md` (Keep a Changelog, em português) e os docs (README,
+ROADMAP) no mesmo passe, no mesmo PR. Tag só com confirmação: as v0.1 a v0.3
+ainda não têm tag.
 
 ## Board no Trello
 
-O padrão FocusEven pede um board espelhando o ROADMAP. Como ainda não há
-ROADMAP, ainda não há board definido.
+Board **Audio to Text (transcript-audio-yt)**, no workspace do Henry:
+https://trello.com/b/NPJRxfEN/audio-to-text-transcript-audio-yt
+
+Listas: `📌 Visão & Regras`, `✅ Concluído / Histórico` (um card por versão
+fechada), uma lista por versão aberta do ROADMAP (os itens pendentes viram
+cards) e `💭 Backlog`. O repositório é a fonte da verdade. Atualize o board
+durante o trabalho, sem precisar pedir: card concluído vai para o histórico
+quando a versão fecha, e item novo no ROADMAP vira card.
 
 ## Regras gerais
 
