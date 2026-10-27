@@ -1,9 +1,27 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
 from pathlib import Path
-import tempfile
+import time
 import wave
+
+IS_WINDOWS = os.name == 'nt'
+
+# no .exe sem console (PyInstaller, console=False) stdout/stderr são None, e as
+# barras de progresso (tqdm) do Whisper quebram ao escrever neles
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
+
+# um ffmpeg colocado ao lado do app (ou do .exe) tem prioridade sobre o do PATH
+APP_DIR = Path(sys.executable if getattr(sys, 'frozen', False) else __file__).resolve().parent
+os.environ['PATH'] = str(APP_DIR) + os.pathsep + os.environ.get('PATH', '')
+
+# tem que vir antes do PyQt5: no Windows o Qt carrega um msvcp140.dll antigo e
+# depois o torch (importado pelo whisper) falha com WinError 1114 no c10.dll
+import youtube_audio_to_text as yt
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -13,9 +31,6 @@ from PyQt5.QtWidgets import (
     QProgressBar, QCheckBox, QSpinBox
 )
 
-import yt_dlp
-import youtube_audio_to_text as yt
-
 # Tenta importar sounddevice e numpy; se falhar, desativa gravação
 RECORDING_AVAILABLE = False
 try:
@@ -24,6 +39,14 @@ try:
     RECORDING_AVAILABLE = True
 except (ImportError, OSError) as e:
     print(f"Warning: Could not import sounddevice or PortAudio missing: {e}")
+
+if IS_WINDOWS:
+    RECORDING_HELP = 'Gravação indisponível.\nInstale o sounddevice: pip install sounddevice'
+else:
+    RECORDING_HELP = 'Gravação indisponível.\nInstale o PortAudio: sudo apt install libportaudio2'
+
+# palavras que indicam captura do áudio do sistema (Linux: monitor; Windows: Mixagem estéreo)
+LOOPBACK_HINTS = ('monitor', 'stereo mix', 'mixagem')
 
 
 class Worker(QThread):
@@ -63,11 +86,6 @@ class Worker(QThread):
 
             # Download ou processamento local
             if self.mode == 'yt':
-                try:
-                    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-                        ydl.extract_info(self.url, download=False)
-                except Exception as e:
-                    raise RuntimeError(f'URL inválida ou vídeo não disponível: {e}')
                 self.status.emit('Iniciando download...')
                 def hook(d):
                     status = d.get('status')
@@ -80,9 +98,10 @@ class Worker(QThread):
                     elif status == 'finished':
                         self.status.emit('Download concluído. Convertendo...')
                         self.progress.emit(100)
-                audio_path = yt.download_audio(self.url, audio_folder, progress_hook=hook)
-                if not audio_path:
-                    raise RuntimeError('Falha no download.')
+                try:
+                    audio_path = yt.download_audio(self.url, audio_folder, progress_hook=hook)
+                except Exception as e:
+                    raise RuntimeError(f'Falha no download:\n{e}')
             else:
                 if not self.local_file:
                     raise RuntimeError('Nenhum arquivo local selecionado.')
@@ -121,16 +140,22 @@ class Recorder(QThread):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, device=None):
+    def __init__(self, device=None, output_folder='.'):
         super().__init__()
         self.recording = False
         self.frames = []
         self.device = device
+        self.output_folder = output_folder
 
     def run(self):
         if not RECORDING_AVAILABLE:
             self.error.emit("Biblioteca de áudio não disponível (PortAudio não instalado).")
             return
+
+        if IS_WINDOWS:
+            # o WASAPI exige COM inicializado na thread que abre o stream
+            import ctypes
+            ctypes.windll.ole32.CoInitializeEx(None, 0)
 
         self.recording = True
         self.frames.clear()
@@ -143,8 +168,12 @@ class Recorder(QThread):
                 self.frames.append(indata.copy())
 
         try:
+            # grava na taxa nativa do dispositivo: no Windows (WASAPI) uma taxa
+            # diferente da do dispositivo falha. A conversão para 16 kHz fica
+            # com o ffmpeg, na hora de dividir o áudio para transcrever.
+            samplerate = int(sd.query_devices(self.device, 'input')['default_samplerate'])
             with sd.InputStream(
-                samplerate=16000, channels=1, callback=callback,
+                samplerate=samplerate, channels=1, callback=callback,
                 dtype='int16', device=self.device
             ):
                 while self.recording:
@@ -154,13 +183,16 @@ class Recorder(QThread):
             return
 
         try:
-            temp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
-            with wave.open(temp.name, 'wb') as wf:
+            # salva direto na pasta de áudio, como os downloads: o Worker usa o
+            # arquivo onde está e nada sobra no %TEMP%
+            os.makedirs(self.output_folder, exist_ok=True)
+            out_path = os.path.join(self.output_folder, time.strftime('gravacao_%Y%m%d_%H%M%S.wav'))
+            with wave.open(out_path, 'wb') as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(16000)
+                wf.setframerate(samplerate)
                 wf.writeframes(b''.join(self.frames))
-            self.finished.emit(temp.name)
+            self.finished.emit(out_path)
         except Exception as e:
             self.error.emit(f"Failed to save recording: {e}")
 
@@ -197,7 +229,7 @@ class MainApp(QMainWindow):
 
         if not RECORDING_AVAILABLE:
             self.radio_record.setEnabled(False)
-            self.radio_record.setToolTip("Gravação indisponível: instale o PortAudio (libportaudio2)")
+            self.radio_record.setToolTip(RECORDING_HELP)
 
         group = QButtonGroup(self)
         group.addButton(self.radio_yt)
@@ -231,11 +263,19 @@ class MainApp(QMainWindow):
         layout.addWidget(self.device_combo)
 
         # Dica sobre como capturar áudio do sistema
-        self.device_help = QLabel(
-            "💡 Para gravar o que está saindo do computador (música, vídeo, etc.),\n"
-            "escolha um dispositivo que contenha 'monitor' no nome.\n"
-            "Se não houver, selecione 'default' e configure no pavucontrol."
-        )
+        if IS_WINDOWS:
+            device_help = (
+                "💡 Para gravar o que está saindo do computador (música, vídeo, etc.),\n"
+                "escolha 'Mixagem estéreo' (Stereo Mix). Se não aparecer, ative em\n"
+                "Configurações de som > Mais configurações de som > Gravação."
+            )
+        else:
+            device_help = (
+                "💡 Para gravar o que está saindo do computador (música, vídeo, etc.),\n"
+                "escolha um dispositivo que contenha 'monitor' no nome.\n"
+                "Se não houver, selecione 'default' e configure no pavucontrol."
+            )
+        self.device_help = QLabel(device_help)
         self.device_help.setWordWrap(True)
         self.device_help.setStyleSheet("color: gray; font-size: 10px;")
         self.device_help.setVisible(False)
@@ -333,10 +373,6 @@ class MainApp(QMainWindow):
         if not is_record and self.recorder and self.recorder.isRunning():
             self._stop_recording()
 
-        if not is_record:
-            self.recorded_file = None
-            self.lbl_file.setText('Nenhum arquivo selecionado')
-
     def _select_output_folder(self):
         folder = QFileDialog.getExistingDirectory(self, 'Escolha a pasta de saída')
         if folder:
@@ -366,7 +402,7 @@ class MainApp(QMainWindow):
         elif self.radio_record.isChecked():
             mode = 'local'
             url = ''
-            local_file = self.local_file
+            local_file = self.recorded_file
             if not local_file:
                 QMessageBox.warning(self, 'Aviso', 'Nenhuma gravação disponível.')
                 return
@@ -420,7 +456,7 @@ class MainApp(QMainWindow):
 
     def _start_recording(self):
         if not RECORDING_AVAILABLE:
-            QMessageBox.warning(self, 'Aviso', 'Gravação indisponível.\nInstale o PortAudio: sudo apt install libportaudio2')
+            QMessageBox.warning(self, 'Aviso', RECORDING_HELP)
             return
 
         device_idx = self.device_combo.currentData()
@@ -432,7 +468,7 @@ class MainApp(QMainWindow):
         self.record_status.setText('Preparando microfone...')
         self.lbl_status.setText('Gravando...')
 
-        self.recorder = Recorder(device=device_idx)
+        self.recorder = Recorder(device=device_idx, output_folder=self.output_path)
         self.recorder.finished.connect(self._recording_finished)
         self.recorder.error.connect(self._on_recording_error)
         self.recorder.status.connect(self.record_status.setText)
@@ -451,13 +487,12 @@ class MainApp(QMainWindow):
     def _recording_finished(self, file_path):
         self.record_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.record_status.setText('Gravação concluída.')
+        self.record_status.setText(f'Gravação concluída: {Path(file_path).name}')
+        self.record_status.setToolTip(file_path)
         self.lbl_status.setText('Gravação concluída. Pressione "Transcrever".')
 
+        # fica separada do arquivo local: cada modo transcreve só o que é seu
         self.recorded_file = file_path
-        self.local_file = file_path
-        self.lbl_file.setText(Path(file_path).name)
-        self.lbl_file.setToolTip(file_path)
 
     def _on_recording_error(self, msg):
         self.record_btn.setEnabled(True)
@@ -476,13 +511,16 @@ class MainApp(QMainWindow):
                 if dev['max_input_channels'] > 0:
                     name = dev['name']
                     # Adiciona uma marcação visual para facilitar a escolha
-                    if 'monitor' in name.lower():
+                    if any(h in name.lower() for h in LOOPBACK_HINTS):
                         display_name = f"{name} (monitor - áudio do sistema)"
                     elif 'input' in name.lower() or 'mic' in name.lower() or 'microphone' in name.lower():
                         display_name = f"{name} (microfone)"
                     else:
                         display_name = name
-                    input_devices.append((i, display_name))
+                    # no Windows o mesmo dispositivo aparece uma vez por API
+                    # (MME, DirectSound, WASAPI...); o nome da API desfaz a dúvida
+                    hostapi = sd.query_hostapis(dev['hostapi'])['name']
+                    input_devices.append((i, f"{display_name} [{hostapi}]"))
             if not input_devices:
                 self.device_combo.addItem("Nenhum dispositivo de entrada encontrado")
                 self.device_combo.setEnabled(False)
