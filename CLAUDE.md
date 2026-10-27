@@ -29,8 +29,10 @@ Duas camadas, só isso:
   sanitizado), `process_local_file` (copia mp3/wav, converte o resto para WAV
   16 kHz mono; nunca move nem renomeia o original), `transcribe_audio_with_progress`
   (divide com `ffmpeg -f segment` num `TemporaryDirectory` do sistema, transcreve
-  segmento a segmento com o idioma detectado no 1º e repassa o progresso por
-  callback). O `download_audio` levanta a exceção do yt-dlp em caso de falha.
+  segmento a segmento com o idioma escolhido ou detectado no 1º, repassa o
+  progresso por callback e devolve `{'text', 'segments'}`, com os tempos
+  relativos ao áudio inteiro), `to_srt` (monta a legenda). A lista de idiomas do
+  seletor é o `LANGUAGES` do `app.py`. O `download_audio` levanta a exceção do yt-dlp em caso de falha.
   O `Recorder` salva `gravacao_YYYYMMDD_HHMMSS.wav` direto na pasta de áudio.
 
 O `Worker` só conversa com a UI por sinais (`progress`, `status`, `finished`,
@@ -78,8 +80,9 @@ Não tem testes, lint, análise estática nem CI. Também não tem Docker.
 
 A versão vem do `ROADMAP.md` (`v0.1`, `v0.2`…), não de SemVer. Cada PR
 atualiza o `CHANGELOG.md` (Keep a Changelog, em português) e os docs (README,
-ROADMAP) no mesmo passe, no mesmo PR. Tag só com confirmação: as v0.1 a v0.3
-ainda não têm tag.
+ROADMAP) no mesmo passe, no mesmo PR. A partir da v0.4 (pedido do Henry,
+27/10/2026), cada versão ganha tag anotada `v0.N` no commit de merge do `main`,
+depois do merge, sem perguntar de novo. A v0.1 a v0.3 ficaram sem tag.
 
 ## Board no Trello
 

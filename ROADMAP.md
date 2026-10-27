@@ -54,13 +54,13 @@ quebrar o Linux, e fácil de rodar. PR #5, 27/10/2026.
 
 ---
 
-## ⬜ v0.4 — Idioma e legendas
+## ✅ v0.4 — Idioma e legendas
 
-**Objetivo:** controlar o idioma e gerar legenda, além do texto.
+**Objetivo:** controlar o idioma e gerar legenda, além do texto. 27/10/2026.
 
-- [ ] Seletor de idioma na interface (Automático, Português, Inglês…): resolve
+- [x] Seletor de idioma na interface (Automático, Português, Inglês…): resolve
       a detecção errada quando o áudio começa com música ou silêncio
-- [ ] Exportar `.srt` com marcação de tempo (o Whisper já devolve os segmentos
+- [x] Exportar `.srt` com marcação de tempo (o Whisper já devolve os segmentos
       com tempo; o deslocamento de cada segmento entra na soma)
 
 ---
