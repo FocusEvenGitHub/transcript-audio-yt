@@ -7,3 +7,5 @@ storage/audio/*
 storage/text/*
 cookies.txt
 venv/
+app.log
+.idea/
