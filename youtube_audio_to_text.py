@@ -1,3 +1,5 @@
+import functools
+import glob
 import os
 import subprocess
 import shutil
@@ -29,17 +31,16 @@ logging.basicConfig(
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
 def load_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    else:
-        # configuração padrão (incorporada) e salva para o usuário
-        default_config = { ... }  # o dicionário original
-        with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(default_config, f, indent=4, ensure_ascii=False)
-        return default_config
+    # o config.json é obrigatório (versionado e embutido no .exe); se faltar, o
+    # FileNotFoundError já diz o caminho procurado
+    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 CONFIG = load_config()
+
+# ponytail: guarda só o último modelo usado (o large ocupa ~3 GB de RAM);
+# trocar de modelo recarrega
+_load_model = functools.lru_cache(maxsize=1)(whisper.load_model)
 
 def setup_folders():
     os.makedirs(CONFIG['storage'], exist_ok=True)
@@ -63,6 +64,16 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     if safe.upper() in WINDOWS_RESERVED:
         safe += '_'
     return safe
+
+
+def _unique_path(folder, stem: str, ext: str) -> Path:
+    # evita sobrescrever arquivo existente: nome, nome_1, nome_2...
+    path = Path(folder) / f"{stem}{ext}"
+    counter = 1
+    while path.exists():
+        path = Path(folder) / f"{stem}_{counter}{ext}"
+        counter += 1
+    return path
 
 
 def download_audio(youtube_url: str, output_folder: Optional[str] = None, progress_hook: Optional[Callable] = None) -> str:
@@ -113,14 +124,22 @@ def download_audio(youtube_url: str, output_folder: Optional[str] = None, progre
     if progress_hook:
         ydl_opts['progress_hooks'] = [progress_hook]
 
+    info = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=True)
+            # extrai e baixa em dois passos (é o que o extract_info(download=True)
+            # faz por dentro) para já saber o id se o download falhar
+            info = ydl.extract_info(youtube_url, download=False)
+            info = ydl.process_ie_result(info, download=True)
             # caminho do arquivo originalmente gerado (antes de renomear)
             generated = Path(ydl.prepare_filename(info)).with_suffix('.mp3')
     except Exception as e:
         # repassa o erro: a mensagem do yt-dlp é o que explica a falha para o usuário
         logging.error(f'❌ Erro no download: {e}')
+        # remove só o que este vídeo deixou pela metade (<id>.mp4.part, <id>.webm...)
+        if info and info.get('id'):
+            for leftover in Path(output_folder).glob(f"{glob.escape(info['id'])}.*"):
+                leftover.unlink(missing_ok=True)
         raise
 
     if not generated.exists():
@@ -128,14 +147,7 @@ def download_audio(youtube_url: str, output_folder: Optional[str] = None, progre
 
     # tenta nome a partir do título; se não tiver título, usa id
     title = info.get('title') or info.get('id') or generated.stem
-    safe_title = sanitize_filename(title)
-
-    # evita sobrescrever arquivo existente: incrementa se necessário
-    final = Path(output_folder) / (safe_title + '.mp3')
-    counter = 1
-    while final.exists():
-        final = Path(output_folder) / f"{safe_title}_{counter}.mp3"
-        counter += 1
+    final = _unique_path(output_folder, sanitize_filename(title), '.mp3')
     try:
         shutil.move(str(generated), str(final))
         return str(final)
@@ -194,28 +206,12 @@ def process_local_file(file_path: str, output_folder: Optional[str] = None) -> O
         # Caso contrário, copia/converte para a pasta de saída (o original nunca é
         # renomeado nem movido, mesmo que já esteja nessa pasta)
         if ext in ('.mp3', '.wav'):
-            # Copia para o destino, evitando sobrescrever
-            if target.exists():
-                counter = 1
-                while True:
-                    candidate = Path(output_folder) / f"{safe_stem}_{counter}{ext}"
-                    if not candidate.exists():
-                        target = candidate
-                        break
-                    counter += 1
+            target = _unique_path(output_folder, safe_stem, ext)
             shutil.copy2(path, target)
             return str(target)
         else:
             # Converte para WAV
-            target_wav = Path(output_folder) / (safe_stem + '.wav')
-            if target_wav.exists():
-                counter = 1
-                while True:
-                    candidate = Path(output_folder) / f"{safe_stem}_{counter}.wav"
-                    if not candidate.exists():
-                        target_wav = candidate
-                        break
-                    counter += 1
+            target_wav = _unique_path(output_folder, safe_stem, '.wav')
             convert_to_wav(path, output_path=target_wav)
             return str(target_wav)
     except Exception as e:
@@ -248,7 +244,7 @@ def _load_wav(path: str) -> np.ndarray:
 
 
 def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Optional[Callable[[int, Optional[str]], None]] = None, segment_time: int = 30) -> str:
-    model = whisper.load_model(model_name)
+    model = _load_model(model_name)
 
     # a pasta dos segmentos some ao sair do bloco, mesmo se a transcrição falhar
     with tempfile.TemporaryDirectory(prefix='tmp_segments_', ignore_cleanup_errors=True) as tmp_dir:
@@ -287,14 +283,3 @@ def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Op
         callback(100, 'Transcrição concluída')
 
     return text
-
-
-def transcribe_audio(file_path: str, model_name: str) -> str:
-    model = whisper.load_model(model_name)
-    result = model.transcribe(
-        file_path,
-        # language='pt',
-        verbose=False,
-        fp16=False
-    )
-    return result['text']

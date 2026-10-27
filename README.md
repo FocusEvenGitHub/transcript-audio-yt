@@ -80,6 +80,9 @@ python app.py
    - **Modelo Whisper** – larger models are more accurate but slower.
    - **Duração do segmento** – the chunk length in seconds.
 3. Click **Transcrever**. When it finishes, a dialog shows the path of the `.txt` file.
+   **Cancelar** stops the job at the next checkpoint: during a download it stops almost at once, and
+   during a transcription it finishes the current segment first. Closing the window while a job runs
+   asks for confirmation and cancels the job the same way.
 
 Your original files are never moved or renamed: a local file is copied (or converted to WAV) into the
 audio folder. Recordings are saved straight into the audio folder as `gravacao_YYYYMMDD_HHMMSS.wav`.

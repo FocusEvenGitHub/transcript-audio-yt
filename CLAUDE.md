@@ -14,7 +14,6 @@ do microfone com o Whisper. Detalhes de uso ficam no `README.md`.
   openai-whisper 20250625, sounddevice 0.5.6 e torch 2.14.1+cpu.
 - FFmpeg no PATH (chamado via `subprocess` para converter e dividir o áudio).
 - Empacotamento com PyInstaller (`app.spec`, onefile, `icone.ico`).
-  `AudioTranscriber.spec` é um spec antigo, gerado sem hiddenimports.
 
 ## Arquitetura (conferida)
 
@@ -35,7 +34,11 @@ Duas camadas, só isso:
   O `Recorder` salva `gravacao_YYYYMMDD_HHMMSS.wav` direto na pasta de áudio.
 
 O `Worker` só conversa com a UI por sinais (`progress`, `status`, `finished`,
-`error`); não mexa em widgets de dentro da thread.
+`error`, `cancelled`); não mexa em widgets de dentro da thread. O cancelamento é
+cooperativo: `cancel()` liga `cancel_requested`, e o hook de download e o
+callback de progresso levantam exceção no próximo ponto de checagem. O
+`closeEvent` cancela e espera o `Worker` e o `Recorder`. O modelo do Whisper
+fica em cache (`_load_model`, só o último usado).
 
 Arquivos auxiliares: o `config.json` define as pastas (`storage/audio`,
 `storage/text`), os formatos aceitos, as tentativas de download e o mapa de
@@ -87,12 +90,8 @@ ROADMAP, ainda não há board definido.
 
 - Sem dependência nova nem bump de versão sem pedido. Nunca dizer que um teste
   passou sem ter rodado.
-- Divergências conhecidas entre código e doc (aponte, não corrija em silêncio):
-  - `load_config()` tenta criar o `config.json` a partir do placeholder
-    `{ ... }`, que quebra no `json.dump`. O README documenta o `config.json`
-    como obrigatório.
-  - O `.gitignore` ignora `YoutubeAudios/*`, mas 4 transcrições dessa pasta
-    continuam versionadas.
+- Quando código e doc divergirem, aponte o conflito em vez de escolher em
+  silêncio. O `config.json` é obrigatório: `load_config()` não cria um padrão.
 
 ## Windows e Linux
 

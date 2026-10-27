@@ -54,6 +54,7 @@ class Worker(QThread):
     status = pyqtSignal(str)
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
+    cancelled = pyqtSignal()
 
     def __init__(self, mode, url, local_file, output_folder, model_key, segment_time, same_folder):
         super().__init__()
@@ -64,6 +65,17 @@ class Worker(QThread):
         self.model_key = model_key
         self.segment_time = segment_time
         self.same_folder = same_folder
+        self.cancel_requested = False
+
+    def cancel(self):
+        # ponytail: o pedido só é atendido no próximo ponto de checagem (progresso
+        # do download ou fim de um segmento); carregar o modelo e transcrever sem
+        # segmentação não são interrompidos
+        self.cancel_requested = True
+
+    def _check_cancel(self):
+        if self.cancel_requested:
+            raise RuntimeError('Cancelado pelo usuário.')
 
     def run(self):
         try:
@@ -88,6 +100,7 @@ class Worker(QThread):
             if self.mode == 'yt':
                 self.status.emit('Iniciando download...')
                 def hook(d):
+                    self._check_cancel()
                     status = d.get('status')
                     if status == 'downloading':
                         total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
@@ -113,6 +126,7 @@ class Worker(QThread):
             # Transcrição
             self.status.emit('Preparando transcrição...')
             def trans_callback(percent, message=None):
+                self._check_cancel()
                 if message:
                     self.status.emit(message)
                 self.progress.emit(percent)
@@ -132,7 +146,11 @@ class Worker(QThread):
             self.finished.emit(str(out_path))
 
         except Exception as e:
-            self.error.emit(str(e))
+            # o yt-dlp pode embrulhar a exceção do cancelamento; vale o pedido
+            if self.cancel_requested:
+                self.cancelled.emit()
+            else:
+                self.error.emit(str(e))
 
 
 class Recorder(QThread):
@@ -330,6 +348,10 @@ class MainApp(QMainWindow):
         self.btn_transcribe = QPushButton('Transcrever')
         layout.addWidget(self.btn_transcribe)
 
+        self.btn_cancel = QPushButton('Cancelar')
+        self.btn_cancel.setVisible(False)
+        layout.addWidget(self.btn_cancel)
+
         # --- Status ---
         self.lbl_status = QLabel('Pronto')
         self.lbl_status.setAlignment(Qt.AlignCenter)
@@ -349,6 +371,7 @@ class MainApp(QMainWindow):
         self.btn_file.clicked.connect(self._select_local_file)
         self.btn_output.clicked.connect(self._select_output_folder)
         self.btn_transcribe.clicked.connect(self._start)
+        self.btn_cancel.clicked.connect(self._cancel)
         self.record_btn.clicked.connect(self._start_recording)
         self.stop_btn.clicked.connect(self._stop_recording)
 
@@ -419,6 +442,8 @@ class MainApp(QMainWindow):
         same_folder = self.same_folder_check.isChecked()
 
         self.btn_transcribe.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.btn_cancel.setVisible(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.lbl_status.setText('Iniciando...')
@@ -431,7 +456,19 @@ class MainApp(QMainWindow):
         self.worker.status.connect(self._on_status)
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
+        self.worker.cancelled.connect(self._on_cancelled)
         self.worker.start()
+
+    def _cancel(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.btn_cancel.setEnabled(False)
+            self.lbl_status.setText('Cancelando... (termina o trecho atual)')
+
+    def _job_done(self):
+        self.progress_bar.setVisible(False)
+        self.btn_transcribe.setEnabled(True)
+        self.btn_cancel.setVisible(False)
 
     def _on_progress(self, p: int):
         if not self.progress_bar.isVisible():
@@ -439,20 +476,43 @@ class MainApp(QMainWindow):
         self.progress_bar.setValue(max(0, min(p, 100)))
 
     def _on_status(self, s: str):
-        self.lbl_status.setText(s)
-        QApplication.processEvents()
+        # depois de pedir o cancelamento, o status do worker não sobrescreve o aviso
+        if self.worker and not self.worker.cancel_requested:
+            self.lbl_status.setText(s)
 
     def _on_finished(self, out_path: str):
-        self.progress_bar.setVisible(False)
-        self.btn_transcribe.setEnabled(True)
+        self._job_done()
         QMessageBox.information(self, 'Sucesso', f'Salvo em:\n{out_path}')
         self.lbl_status.setText('Pronto')
 
     def _on_error(self, msg: str):
-        self.progress_bar.setVisible(False)
-        self.btn_transcribe.setEnabled(True)
+        self._job_done()
         QMessageBox.critical(self, 'Erro', msg)
         self.lbl_status.setText('Erro')
+
+    def _on_cancelled(self):
+        self._job_done()
+        self.lbl_status.setText('Cancelado')
+
+    def closeEvent(self, event):
+        # sem isto, fechar com a thread rodando derruba o app
+        # ("QThread: Destroyed while thread is still running")
+        if self.worker and self.worker.isRunning():
+            answer = QMessageBox.question(
+                self, 'Sair', 'Uma transcrição está em andamento. Cancelar e sair?'
+            )
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                return
+            # ponytail: espera o trecho atual com a janela parada; com modelo grande
+            # pode levar alguns segundos
+            self.lbl_status.setText('Cancelando...')
+            self.worker.cancel()
+            self.worker.wait()
+        if self.recorder and self.recorder.isRunning():
+            self.recorder.stop()
+            self.recorder.wait()
+        event.accept()
 
     def _start_recording(self):
         if not RECORDING_AVAILABLE:
