@@ -45,6 +45,20 @@ if IS_WINDOWS:
 else:
     RECORDING_HELP = 'Gravação indisponível.\nInstale o PortAudio: sudo apt install libportaudio2'
 
+# idiomas do seletor (nome exibido → código do Whisper; None = detectar).
+# O Whisper aceita ~100; para outro, basta acrescentar aqui (whisper.tokenizer.LANGUAGES)
+LANGUAGES = {
+    'Automático': None,
+    'Português': 'pt',
+    'Inglês': 'en',
+    'Espanhol': 'es',
+    'Francês': 'fr',
+    'Italiano': 'it',
+    'Alemão': 'de',
+    'Japonês': 'ja',
+    'Chinês': 'zh',
+}
+
 # palavras que indicam captura do áudio do sistema (Linux: monitor; Windows: Mixagem estéreo)
 LOOPBACK_HINTS = ('monitor', 'stereo mix', 'mixagem')
 
@@ -56,7 +70,8 @@ class Worker(QThread):
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, mode, url, local_file, output_folder, model_key, segment_time, same_folder):
+    def __init__(self, mode, url, local_file, output_folder, model_key, segment_time, same_folder,
+                 language=None, save_srt=False):
         super().__init__()
         self.mode = mode
         self.url = url
@@ -65,6 +80,8 @@ class Worker(QThread):
         self.model_key = model_key
         self.segment_time = segment_time
         self.same_folder = same_folder
+        self.language = language
+        self.save_srt = save_srt
         self.cancel_requested = False
 
     def cancel(self):
@@ -131,19 +148,27 @@ class Worker(QThread):
                     self.status.emit(message)
                 self.progress.emit(percent)
 
-            text = yt.transcribe_audio_with_progress(
+            result = yt.transcribe_audio_with_progress(
                 audio_path, model_name,
                 callback=trans_callback,
-                segment_time=self.segment_time
+                segment_time=self.segment_time,
+                language=self.language
             )
 
             out_path = Path(text_folder) / (Path(audio_path).stem + '.txt')
             with open(out_path, 'w', encoding='utf-8') as f:
-                f.write(text)
+                f.write(result['text'])
+            saved = [str(out_path)]
+
+            if self.save_srt:
+                srt_path = out_path.with_suffix('.srt')
+                with open(srt_path, 'w', encoding='utf-8') as f:
+                    f.write(yt.to_srt(result['segments']))
+                saved.append(str(srt_path))
 
             self.status.emit('Concluído!')
             self.progress.emit(100)
-            self.finished.emit(str(out_path))
+            self.finished.emit('\n'.join(saved))
 
         except Exception as e:
             # o yt-dlp pode embrulhar a exceção do cancelamento; vale o pedido
@@ -320,6 +345,11 @@ class MainApp(QMainWindow):
         self.same_folder_check.setChecked(False)
         layout.addWidget(self.same_folder_check)
 
+        # --- Legenda ---
+        self.srt_check = QCheckBox('Gerar também a legenda (.srt)')
+        self.srt_check.setToolTip('Salva um .srt com a marcação de tempo ao lado do .txt')
+        layout.addWidget(self.srt_check)
+
         # --- Modelo Whisper ---
         layout.addWidget(QLabel('Modelo Whisper:'))
         self.model_combo = QComboBox()
@@ -328,6 +358,17 @@ class MainApp(QMainWindow):
         default_index = list(yt.CONFIG['whisper_models'].values()).index(default_model)
         self.model_combo.setCurrentIndex(default_index)
         layout.addWidget(self.model_combo)
+
+        # --- Idioma ---
+        layout.addWidget(QLabel('Idioma do áudio:'))
+        self.language_combo = QComboBox()
+        for name, code in LANGUAGES.items():
+            self.language_combo.addItem(name, code)
+        self.language_combo.setToolTip(
+            'Automático detecta no início do áudio. Escolha o idioma se o áudio\n'
+            'começar com música ou silêncio, ou se a detecção errar.'
+        )
+        layout.addWidget(self.language_combo)
 
         # --- Duração do segmento ---
         layout.addWidget(QLabel('Duração do segmento (segundos):'))
@@ -440,6 +481,8 @@ class MainApp(QMainWindow):
         model_key = self.model_combo.currentText()
         segment_time = self.segment_spin.value()
         same_folder = self.same_folder_check.isChecked()
+        language = self.language_combo.currentData()
+        save_srt = self.srt_check.isChecked()
 
         self.btn_transcribe.setEnabled(False)
         self.btn_cancel.setEnabled(True)
@@ -450,7 +493,8 @@ class MainApp(QMainWindow):
 
         self.worker = Worker(
             mode, url, local_file, self.output_path,
-            model_key, segment_time, same_folder
+            model_key, segment_time, same_folder,
+            language=language, save_srt=save_srt
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.status.connect(self._on_status)

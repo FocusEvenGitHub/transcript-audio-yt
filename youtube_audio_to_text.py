@@ -243,8 +243,15 @@ def _load_wav(path: str) -> np.ndarray:
     return np.frombuffer(data, np.int16).astype(np.float32) / 32768.0
 
 
-def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Optional[Callable[[int, Optional[str]], None]] = None, segment_time: int = 30) -> str:
+def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Optional[Callable[[int, Optional[str]], None]] = None, segment_time: int = 30, language: Optional[str] = None) -> dict:
+    """
+    Transcreve o áudio. Com language=None, o idioma é detectado no 1º segmento e
+    reaproveitado nos demais (o Whisper faz o mesmo com o arquivo inteiro).
+    Retorna {'text': str, 'segments': [(início_s, fim_s, texto), ...]}, com os
+    tempos relativos ao áudio inteiro.
+    """
     model = _load_model(model_name)
+    timed = []
 
     # a pasta dos segmentos some ao sair do bloco, mesmo se a transcrição falhar
     with tempfile.TemporaryDirectory(prefix='tmp_segments_', ignore_cleanup_errors=True) as tmp_dir:
@@ -257,24 +264,27 @@ def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Op
             # fallback: transcreve o arquivo inteiro, sem segmentação
             if callback:
                 callback(0, 'Transcrevendo (sem segmentação)...')
-            text = model.transcribe(file_path, verbose=False, fp16=False)['text']
+            r = model.transcribe(file_path, language=language, verbose=False, fp16=False)
+            text = r['text']
+            timed = [(s['start'], s['end'], s['text'].strip()) for s in r.get('segments', [])]
         else:
-            # ponytail: o idioma é detectado no 1º segmento e reaproveitado nos demais
-            # (o Whisper faz o mesmo com o arquivo inteiro). Se o áudio começar com
-            # música ou silêncio a detecção pode errar; aí vale um seletor de idioma na UI.
-            language = None
             full_text_parts = []
+            offset = 0.0
             total = len(segments)
             for idx, seg in enumerate(segments):
                 if callback:
                     callback(int((idx / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
+                audio = _load_wav(seg)
                 try:
-                    r = model.transcribe(_load_wav(seg), language=language, verbose=False, fp16=False)
+                    r = model.transcribe(audio, language=language, verbose=False, fp16=False)
                     language = language or r.get('language')
                     seg_text = r.get('text', '')
+                    timed += [(offset + s['start'], offset + s['end'], s['text'].strip()) for s in r.get('segments', [])]
                 except Exception as e:
                     seg_text = f'\n[Erro ao transcrever segmento {idx + 1}: {e}]\n'
                 full_text_parts.append(seg_text)
+                # duração real do segmento (o ffmpeg não corta exatamente no segment_time)
+                offset += len(audio) / 16000
                 if callback:
                     callback(int(((idx + 1) / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
             text = "\n".join(full_text_parts)
@@ -282,4 +292,20 @@ def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Op
     if callback:
         callback(100, 'Transcrição concluída')
 
-    return text
+    return {'text': text, 'segments': timed}
+
+
+def _srt_time(seconds: float) -> str:
+    ms = int(round(seconds * 1000))
+    h, ms = divmod(ms, 3_600_000)
+    m, ms = divmod(ms, 60_000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def to_srt(segments) -> str:
+    """Monta a legenda .srt a partir de [(início_s, fim_s, texto), ...]."""
+    blocks = []
+    for i, (start, end, text) in enumerate((s for s in segments if s[2]), 1):
+        blocks.append(f"{i}\n{_srt_time(start)} --> {_srt_time(end)}\n{text}\n")
+    return "\n".join(blocks)

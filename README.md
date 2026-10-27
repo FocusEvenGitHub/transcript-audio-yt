@@ -13,6 +13,8 @@ Whisper. The audio can come from a **YouTube video**, a **local media file** or 
   - **Local file** – `.mp3`, `.wav`, `.ogg`, `.m4a`, `.mp4`, `.avi`, `.mov`.
   - **Recording** – from a microphone or from the system output (Stereo Mix on Windows, `monitor` devices on Linux).
 - **Whisper model choice** – Tiny, Base, Small (default), Medium or Large.
+- **Language** – automatic detection, or a fixed language (Portuguese, English, Spanish…).
+- **Subtitles** – optionally saves a `.srt` file with timestamps next to the `.txt`.
 - **Segmented transcription** – the audio is split into chunks (10–600 s, default 30 s) so the progress bar can follow the work.
 - **Output** – one `.txt` per audio file, in `storage/text/` or next to the audio.
 
@@ -79,7 +81,11 @@ python app.py
 2. Optionally set:
    - **Escolher Pasta de Saída** – where the audio is saved (default: `storage/audio`).
    - **Salvar texto na mesma pasta do áudio** – saves the `.txt` next to the audio instead of in `storage/text`.
+   - **Gerar também a legenda (.srt)** – also saves a subtitle file with timestamps.
    - **Modelo Whisper** – larger models are more accurate but slower.
+   - **Idioma do áudio** – *Automático* detects the language at the start of the audio and keeps it for
+     the rest. Pick the language yourself if the audio starts with music or silence, or if the
+     detection gets it wrong.
    - **Duração do segmento** – the chunk length in seconds.
 3. Click **Transcrever**. When it finishes, a dialog shows the path of the `.txt` file.
    **Cancelar** stops the job at the next checkpoint: during a download it stops almost at once, and

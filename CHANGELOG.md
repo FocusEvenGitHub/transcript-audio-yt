@@ -1,8 +1,27 @@
 # Changelog — Audio to Text (transcript-audio-yt)
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
-As versões seguem o [ROADMAP.md](ROADMAP.md), não SemVer. As versões abaixo
-ainda não têm tag no git; a tag só é criada com confirmação.
+As versões seguem o [ROADMAP.md](ROADMAP.md), não SemVer. A partir da v0.4,
+cada versão tem tag no git (`v0.4`…), criada no `main` depois do merge; a v0.1
+a v0.3 ficaram sem tag.
+
+---
+
+## v0.4 — Idioma e legendas — 2026-10-27
+
+### Adicionado
+- **Seletor de idioma** ("Idioma do áudio"): Automático (padrão) ou um idioma
+  fixo (Português, Inglês, Espanhol, Francês, Italiano, Alemão, Japonês,
+  Chinês). Com um idioma fixo, o Whisper não tenta detectar, o que resolve a
+  detecção errada quando o áudio começa com música ou silêncio.
+- **Legenda `.srt`**: com a opção "Gerar também a legenda (.srt)", o app salva
+  um `.srt` com marcação de tempo ao lado do `.txt`. Os tempos são do áudio
+  inteiro: cada segmento soma a duração real dos anteriores. Isso vale também
+  quando a transcrição é feita sem segmentação.
+
+### Alterado
+- `transcribe_audio_with_progress()` aceita `language` e devolve
+  `{'text', 'segments'}` em vez de só o texto.
 
 ---
 
