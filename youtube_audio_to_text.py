@@ -1,14 +1,23 @@
 import os
 import subprocess
 import shutil
-import time
+import tempfile
 from pathlib import Path
 from typing import Optional, Callable, List
 
+import wave
+
+import numpy as np
 import yt_dlp
 import whisper
 import logging
 import json
+
+# no Windows, impede que cada chamada ao ffmpeg abra uma janela de console
+NO_WINDOW = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+
+# nomes que o Windows não aceita como arquivo (com qualquer extensão)
+WINDOWS_RESERVED = {'CON', 'PRN', 'AUX', 'NUL'} | {f'{p}{i}' for p in ('COM', 'LPT') for i in range(1, 10)}
 
 logging.basicConfig(
     filename='app.log',
@@ -51,13 +60,16 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     # trunca sem quebrar palavras (corta no último espaço antes do limite)
     if len(safe) > max_length:
         safe = safe[:max_length].rsplit(' ', 1)[0]
+    if safe.upper() in WINDOWS_RESERVED:
+        safe += '_'
     return safe
 
 
-def download_audio(youtube_url: str, output_folder: Optional[str] = None, progress_hook: Optional[Callable] = None) -> Optional[str]:
+def download_audio(youtube_url: str, output_folder: Optional[str] = None, progress_hook: Optional[Callable] = None) -> str:
     """
     Faz o download do áudio usando yt-dlp para a pasta output_folder (ou CONFIG['audio_folder']).
     Retorna o caminho final do .mp3 salvo (com nome baseado no título do vídeo, sanitizado).
+    Em caso de falha, levanta a exceção do yt-dlp.
     Usa cookies.txt ao lado do módulo ou no cwd se existir.
     """
     if output_folder is None:
@@ -106,35 +118,31 @@ def download_audio(youtube_url: str, output_folder: Optional[str] = None, progre
             info = ydl.extract_info(youtube_url, download=True)
             # caminho do arquivo originalmente gerado (antes de renomear)
             generated = Path(ydl.prepare_filename(info)).with_suffix('.mp3')
-
-            # tenta nome a partir do título; se não tiver título, usa id
-            title = info.get('title') or info.get('id') or generated.stem
-            safe_title = sanitize_filename(title)
-            target = Path(output_folder) / (safe_title + '.mp3')
-
-            # se o arquivo gerado tem outro nome, renomeia para manter o título
-            try:
-                if generated.exists():
-                    # evita sobrescrever arquivo existente: incrementa se necessário
-                    final = target
-                    counter = 1
-                    while final.exists():
-                        final = Path(output_folder) / f"{safe_title}_{counter}.mp3"
-                        counter += 1
-                    shutil.move(str(generated), str(final))
-                    return str(final)
-                else:
-                    # se por algum motivo não existe (postprocessor), tenta procurar por arquivos mp3 recentes no output_folder
-                    # fallback: retorna generated mesmo (mesmo que não exista) — caller lidará com erro
-                    return str(target)
-            except Exception as e:
-                logging.error(f'❌ Erro ao renomear arquivo baixado: {e}')
-                # como fallback, retorna o caminho gerado original
-                return str(generated)
-
     except Exception as e:
+        # repassa o erro: a mensagem do yt-dlp é o que explica a falha para o usuário
         logging.error(f'❌ Erro no download: {e}')
-        return None
+        raise
+
+    if not generated.exists():
+        raise RuntimeError(f'O download terminou, mas o arquivo não foi encontrado: {generated}')
+
+    # tenta nome a partir do título; se não tiver título, usa id
+    title = info.get('title') or info.get('id') or generated.stem
+    safe_title = sanitize_filename(title)
+
+    # evita sobrescrever arquivo existente: incrementa se necessário
+    final = Path(output_folder) / (safe_title + '.mp3')
+    counter = 1
+    while final.exists():
+        final = Path(output_folder) / f"{safe_title}_{counter}.mp3"
+        counter += 1
+    try:
+        shutil.move(str(generated), str(final))
+        return str(final)
+    except Exception as e:
+        logging.error(f'❌ Erro ao renomear arquivo baixado: {e}')
+        # como fallback, retorna o caminho gerado original
+        return str(generated)
 
 
 def convert_to_wav(input_path: Path, output_path: Optional[Path] = None) -> Path:
@@ -153,7 +161,8 @@ def convert_to_wav(input_path: Path, output_path: Optional[Path] = None) -> Path
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        check=True
+        check=True,
+        **NO_WINDOW
     )
 
     return output_path
@@ -182,21 +191,8 @@ def process_local_file(file_path: str, output_folder: Optional[str] = None) -> O
         if path.resolve() == target.resolve():
             return str(target)
 
-        # Se está na mesma pasta mas com nome diferente, renomeia para o nome sanitizado
-        if path.parent == target.parent:
-            # Evita sobrescrever arquivo existente
-            if target.exists():
-                counter = 1
-                while True:
-                    candidate = target.parent / f"{safe_stem}_{counter}{ext}"
-                    if not candidate.exists():
-                        target = candidate
-                        break
-                    counter += 1
-            path.rename(target)
-            return str(target)
-
-        # Caso contrário, copia/converte para a pasta de saída
+        # Caso contrário, copia/converte para a pasta de saída (o original nunca é
+        # renomeado nem movido, mesmo que já esteja nessa pasta)
         if ext in ('.mp3', '.wav'):
             # Copia para o destino, evitando sobrescrever
             if target.exists():
@@ -237,58 +233,60 @@ def _split_audio_to_segments(input_path: str, out_dir: str, segment_time: int = 
         '-reset_timestamps', '1',
         pattern
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, **NO_WINDOW)
     files = [str(Path(out_dir) / f) for f in os.listdir(out_dir) if f.lower().endswith('.wav')]
     files.sort(key=lambda x: int(Path(x).stem.replace('segment', '')))
     return files
 
 
+def _load_wav(path: str) -> np.ndarray:
+    # os segmentos já saem em WAV 16 kHz mono PCM 16 bits; lendo aqui, o Whisper
+    # não precisa chamar o ffmpeg de novo para cada segmento
+    with wave.open(path, 'rb') as wf:
+        data = wf.readframes(wf.getnframes())
+    return np.frombuffer(data, np.int16).astype(np.float32) / 32768.0
+
+
 def transcribe_audio_with_progress(file_path: str, model_name: str, callback: Optional[Callable[[int, Optional[str]], None]] = None, segment_time: int = 30) -> str:
-    tmp_dir = Path(CONFIG['audio_folder']) / f"tmp_segments_{int(time.time())}"
-    try:
-        segments = _split_audio_to_segments(file_path, str(tmp_dir), segment_time=segment_time)
-    except Exception:
-        # fallback: try to transcribe whole file without splitting, but still send heartbeats
-        model = whisper.load_model(model_name)
-        if callback:
-            callback(0, 'Transcrevendo (sem segmentação)...')
-        result = model.transcribe(file_path,  verbose=False, fp16=False)
-        if callback:
-            callback(100, 'Transcrição concluída')
-        return result['text']
-
-    if not segments:
-        model = whisper.load_model(model_name)
-        result = model.transcribe(file_path,  verbose=False, fp16=False)
-        if callback:
-            callback(100, 'Transcrição concluída')
-        return result['text']
-
     model = whisper.load_model(model_name)
 
-    full_text_parts = []
-    total = len(segments)
-    for idx, seg in enumerate(segments):
-        if callback:
-            callback(int((idx / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
+    # a pasta dos segmentos some ao sair do bloco, mesmo se a transcrição falhar
+    with tempfile.TemporaryDirectory(prefix='tmp_segments_', ignore_cleanup_errors=True) as tmp_dir:
         try:
-            r = model.transcribe(seg,  verbose=False, fp16=False)
-            text = r.get('text', '')
-        except Exception as e:
-            text = f'\n[Erro ao transcrever segmento {idx + 1}: {e}]\n'
-        full_text_parts.append(text)
-        if callback:
-            callback(int(((idx + 1) / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
+            segments = _split_audio_to_segments(file_path, tmp_dir, segment_time=segment_time)
+        except Exception:
+            segments = []
 
-    try:
-        shutil.rmtree(tmp_dir)
-    except Exception:
-        pass
+        if not segments:
+            # fallback: transcreve o arquivo inteiro, sem segmentação
+            if callback:
+                callback(0, 'Transcrevendo (sem segmentação)...')
+            text = model.transcribe(file_path, verbose=False, fp16=False)['text']
+        else:
+            # ponytail: o idioma é detectado no 1º segmento e reaproveitado nos demais
+            # (o Whisper faz o mesmo com o arquivo inteiro). Se o áudio começar com
+            # música ou silêncio a detecção pode errar; aí vale um seletor de idioma na UI.
+            language = None
+            full_text_parts = []
+            total = len(segments)
+            for idx, seg in enumerate(segments):
+                if callback:
+                    callback(int((idx / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
+                try:
+                    r = model.transcribe(_load_wav(seg), language=language, verbose=False, fp16=False)
+                    language = language or r.get('language')
+                    seg_text = r.get('text', '')
+                except Exception as e:
+                    seg_text = f'\n[Erro ao transcrever segmento {idx + 1}: {e}]\n'
+                full_text_parts.append(seg_text)
+                if callback:
+                    callback(int(((idx + 1) / total) * 100), f'Transcrevendo segmento {idx + 1}/{total}...')
+            text = "\n".join(full_text_parts)
 
     if callback:
         callback(100, 'Transcrição concluída')
 
-    return "\n".join(full_text_parts)
+    return text
 
 
 def transcribe_audio(file_path: str, model_name: str) -> str:

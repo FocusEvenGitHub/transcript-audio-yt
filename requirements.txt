@@ -1,0 +1,7 @@
+# versões testadas (Python 3.10). O torch vem junto com o openai-whisper.
+PyQt5==5.15.11
+openai-whisper==20250625
+sounddevice==0.5.6
+numpy==2.2.6
+# o YouTube muda com frequência; atualize com: pip install -U yt-dlp
+yt-dlp>=2026.3.17
