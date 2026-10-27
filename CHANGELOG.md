@@ -7,6 +7,24 @@ a v0.3 ficaram sem tag.
 
 ---
 
+## v0.5 — Linux validado — 2026-10-27
+
+Testado num Ubuntu 22.04 limpo (container), com janela e áudio pelo WSLg:
+`run.sh`, interface, YouTube → `.txt`/`.srt`, arquivo local, gravação do
+microfone e do `monitor`, build com PyInstaller e o binário abrindo.
+
+### Alterado
+- O `torch` vem do índice só CPU do PyTorch (`requirements.txt`). No Linux, o
+  do PyPI trazia o CUDA: o venv cai de ~6 GB para ~2 GB. No Windows nada muda.
+
+### Documentação
+- README: pacotes do build no Linux (`binutils`, `libpython3.10`), tamanho do
+  binário (~585 MB), Python 3.10 em Ubuntu mais novo (`PYTHON=python3.10`),
+  como gravar o `monitor` (`pavucontrol` ou `PULSE_SOURCE`) e o plugin ALSA
+  quando a lista de dispositivos vem vazia.
+
+---
+
 ## v0.4 — Idioma e legendas — 2026-10-27
 
 ### Adicionado

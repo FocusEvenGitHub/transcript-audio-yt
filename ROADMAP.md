@@ -65,13 +65,16 @@ quebrar o Linux, e fácil de rodar. PR #5, 27/10/2026.
 
 ---
 
-## ⬜ v0.5 — Linux validado
+## ✅ v0.5 — Linux validado
 
-**Objetivo:** confirmar no Linux o que a v0.2 só testou no Windows.
+**Objetivo:** confirmar no Linux o que a v0.2 só testou no Windows. 27/10/2026.
+Testado num Ubuntu 22.04 limpo em container, com janela e áudio pelo WSLg; ainda
+não numa máquina Linux física (PipeWire).
 
-- [ ] `run.sh` cria o venv e abre o app (Ubuntu)
-- [ ] YouTube, arquivo local e gravação (microfone e `monitor`) no Linux
-- [ ] Build com PyInstaller no Linux
+- [x] `run.sh` cria o venv e abre o app (Ubuntu 22.04)
+- [x] YouTube, arquivo local e gravação (microfone e `monitor`) no Linux
+- [x] Build com PyInstaller no Linux
+- [x] `torch` só CPU: venv no Linux de ~6 GB para ~2 GB
 
 ---
 
@@ -82,3 +85,7 @@ quebrar o Linux, e fácil de rodar. PR #5, 27/10/2026.
 - Usar a GPU quando houver CUDA (`fp16=True`)
 - Abrir o `.txt` ou a pasta ao terminar
 - Arrastar e soltar arquivo na janela
+- Python 3.11+: o yt-dlp já avisa que vai largar o 3.10, e o Ubuntu 24.04+ não
+  traz o 3.10
+- Monitor do PulseAudio/PipeWire como dispositivo na lista (hoje só pelo
+  `pavucontrol` ou `PULSE_SOURCE`)

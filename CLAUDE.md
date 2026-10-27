@@ -9,7 +9,9 @@ do microfone com o Whisper. Detalhes de uso ficam no `README.md`.
 
 - Python 3.10.11 (`venv/`, Windows; o `python` padrão da máquina é o 3.14,
   por isso o `run.bat` usa `py -3.10`). Dependências no `requirements.txt`, com
-  as versões testadas fixadas (o yt-dlp fica com `>=`).
+  as versões testadas fixadas (o yt-dlp fica com `>=`). O `torch` vem do índice
+  só CPU do PyTorch (`--extra-index-url`): no Linux, o do PyPI traz o CUDA e o
+  venv vai de ~2 GB para ~6 GB.
 - O `venv` atual tem PyQt5 5.15.11, yt-dlp 2026.3.17, numpy 2.2.6,
   openai-whisper 20250625, sounddevice 0.5.6 e torch 2.14.1+cpu.
 - FFmpeg no PATH (chamado via `subprocess` para converter e dividir o áudio).
@@ -119,3 +121,14 @@ Armadilhas do Windows, conferidas:
   `Qt5\bin` (com o `msvcp140.dll` 14.26) na busca de DLLs. O `app.spec` troca
   todas as cópias do runtime do VC++ pelas do `System32` de quem gera o build,
   e empacota os assets do Whisper (`collect_data_files('whisper')`).
+
+Linux, conferido num container `ubuntu:22.04` (o Docker serve só para testar;
+não há Dockerfile no repositório), com janela e áudio pelo WSLg:
+- O `run.sh` precisa só de `python3 python3-venv ffmpeg libportaudio2`. O build
+  com PyInstaller pede também `binutils` (objdump) e `libpython3.10`; o binário
+  tem ~585 MB.
+- Pelo PortAudio, o PulseAudio aparece como um dispositivo só (`pulse`, via
+  `libasound2-plugins`); o `monitor` não vira dispositivo separado. Escolhe-se a
+  fonte no `pavucontrol` ou com `PULSE_SOURCE=<saída>.monitor`.
+- Ubuntu 24.04+ não traz Python 3.10 (o 26.04 vem com o 3.14, e o
+  `numpy==2.2.6` não tem wheel para ele): precisa de `PYTHON=python3.10 ./run.sh`.

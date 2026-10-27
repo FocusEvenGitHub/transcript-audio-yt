@@ -24,12 +24,16 @@ What is planned and what changed in each version: [ROADMAP.md](ROADMAP.md) and [
 
 | | Windows | Linux (Debian/Ubuntu) |
 |---|---|---|
-| Python | 3.10 ([python.org](https://www.python.org/downloads/)) | 3.10 (`sudo apt install python3 python3-venv`) |
+| Python | 3.10 ([python.org](https://www.python.org/downloads/)) | 3.10 (`sudo apt install python3 python3-venv` on Ubuntu 22.04) |
 | FFmpeg | see below | `sudo apt install ffmpeg` |
 | PortAudio (recording only) | bundled with `sounddevice` | `sudo apt install libportaudio2` |
 
-The app was tested with Python 3.10.11. Whisper does not support every recent Python release, so check
-[its setup notes](https://github.com/openai/whisper#setup) before using a newer one.
+The app was tested with Python 3.10 on Windows 11 and on Ubuntu 22.04. Newer Ubuntu releases ship a newer
+Python (24.04: 3.12, 26.04: 3.14), which the pinned packages were not tested with: install Python 3.10
+separately and run `PYTHON=python3.10 ./run.sh`.
+
+`requirements.txt` installs the CPU-only build of PyTorch, from PyTorch's own package index. On Linux the
+default build from PyPI also brings CUDA and makes the `venv` about 6 GB instead of about 2 GB.
 
 ### FFmpeg on Windows
 
@@ -100,8 +104,10 @@ audio folder. Recordings are saved straight into the audio folder as `gravacao_Y
 - **Windows** – choose **Mixagem estéreo / Stereo Mix**. If it is not listed, enable it in
   *Settings → Sound → More sound settings → Recording* (right-click → *Show disabled devices*).
   Some sound drivers do not offer it.
-- **Linux (PulseAudio/PipeWire)** – choose a device with `monitor` in its name, or choose `default`
-  and switch the app's input to the monitor in `pavucontrol`.
+- **Linux (PulseAudio/PipeWire)** – the sound server usually appears as a single device (`pulse` or
+  `default`). Choose it, start recording, and switch the app's input to *Monitor of …* in the
+  *Recording* tab of `pavucontrol`. Or start the app with the monitor as the default source:
+  `PULSE_SOURCE=<output>.monitor ./run.sh` (`pactl list short sources` lists the names).
 
 On Windows each device appears once for each audio API (`[MME]`, `[Windows WASAPI]`, …). Any of them
 works, and `MME` is usually the safest choice.
@@ -147,8 +153,9 @@ pip install pyinstaller
 pyinstaller app.spec
 ```
 
-Run it **with the venv activated**, so the build uses the venv's Python and packages. It takes a few
-minutes and produces `dist/app.exe` on Windows or `dist/app` on Linux (about 220 MB, mostly PyTorch),
+Run it **with the venv activated**, so the build uses the venv's Python and packages. On Linux, PyInstaller
+also needs `sudo apt install binutils libpython3.10`. It takes a few minutes and produces `dist/app.exe` on
+Windows (about 220 MB, mostly PyTorch) or `dist/app` on Linux (about 585 MB),
 as a single file with no console window. The first launch takes about 20 s while the bundle is
 extracted.
 
@@ -161,6 +168,8 @@ machine's `System32`, so build on a machine with an up-to-date
 
 - **"Gravar Áudio" is disabled** – `sounddevice` is not installed (Windows), or PortAudio is missing
   (Linux: `sudo apt install libportaudio2`).
+- **Linux: no `pulse`/`default` device in the list** – install the ALSA plugin for the sound server
+  (`sudo apt install libasound2-plugins`, or `pipewire-alsa` on PipeWire).
 - **FFmpeg errors** – run `ffmpeg -version` in a new terminal. On Windows you can also put `ffmpeg.exe`
   next to the app.
 - **Download fails** – the error dialog shows yt-dlp's own message. Update `yt-dlp`
